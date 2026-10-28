@@ -1,0 +1,68 @@
+{
+  "devices": [
+    {
+      "name": "enterprises/test-project/devices/AVPHwEuBfnPOnTqzVFT4IONX2Qqhu9EJ4ubO-bNnQ-yi6CMrGaZhQPIXvRbSGxZEMWRUbaRRO1UCKpY3uYQD7gmH2hRrGQ",
+      "type": "sdm.devices.types.THERMOSTAT",
+      "traits": {
+        "sdm.devices.traits.Info": {"customName": ""},
+        "sdm.devices.traits.Humidity": {"ambientHumidityPercent": 38},
+        "sdm.devices.traits.Connectivity": {"status": "ONLINE"},
+        "sdm.devices.traits.Fan": {},
+        "sdm.devices.traits.ThermostatMode": {"mode": "HEAT", "availableModes": ["HEAT", "OFF"]},
+        "sdm.devices.traits.ThermostatEco": {"availableModes": ["OFF", "MANUAL_ECO"], "mode": "OFF", "heatCelsius": 12.8, "coolCelsius": 24.4},
+        "sdm.devices.traits.ThermostatHvac": {"status": "HEATING"},
+        "sdm.devices.traits.Settings": {"temperatureScale": "FAHRENHEIT"},
+        "sdm.devices.traits.ThermostatTemperatureSetpoint": {"heatCelsius": 20.5},
+        "sdm.devices.traits.Temperature": {"ambientTemperatureCelsius": 19.9}
+      },
+      "parentRelations": [{"parent": "enterprises/test-project/structures/S1/rooms/R1", "displayName": "Hallway"}]
+    },
+    {
+      "name": "enterprises/test-project/devices/DEV-GREAT",
+      "type": "sdm.devices.types.THERMOSTAT",
+      "traits": {
+        "sdm.devices.traits.Info": {"customName": "great room"},
+        "sdm.devices.traits.Humidity": {"ambientHumidityPercent": 41},
+        "sdm.devices.traits.Connectivity": {"status": "ONLINE"},
+        "sdm.devices.traits.ThermostatMode": {"mode": "HEAT", "availableModes": ["HEAT", "OFF"]},
+        "sdm.devices.traits.ThermostatEco": {"availableModes": ["OFF", "MANUAL_ECO"], "mode": "OFF", "heatCelsius": 12.8, "coolCelsius": 24.4},
+        "sdm.devices.traits.ThermostatHvac": {"status": "OFF"},
+        "sdm.devices.traits.ThermostatTemperatureSetpoint": {"heatCelsius": 21.0},
+        "sdm.devices.traits.Temperature": {"ambientTemperatureCelsius": 21.3}
+      },
+      "parentRelations": [{"parent": "enterprises/test-project/structures/S1/rooms/R2", "displayName": "Living Room"}]
+    },
+    {
+      "name": "enterprises/test-project/devices/DEV-MASTER",
+      "type": "sdm.devices.types.THERMOSTAT",
+      "traits": {
+        "sdm.devices.traits.Info": {"customName": ""},
+        "sdm.devices.traits.Humidity": {"ambientHumidityPercent": 40},
+        "sdm.devices.traits.Connectivity": {"status": "ONLINE"},
+        "sdm.devices.traits.ThermostatMode": {"mode": "HEAT", "availableModes": ["HEAT", "OFF"]},
+        "sdm.devices.traits.ThermostatEco": {"availableModes": ["OFF", "MANUAL_ECO"], "mode": "MANUAL_ECO", "heatCelsius": 15.5, "coolCelsius": 24.4},
+        "sdm.devices.traits.ThermostatHvac": {"status": "OFF"},
+        "sdm.devices.traits.ThermostatTemperatureSetpoint": {},
+        "sdm.devices.traits.Temperature": {"ambientTemperatureCelsius": 18.2}
+      },
+      "parentRelations": [{"parent": "enterprises/test-project/structures/S1/rooms/R3", "displayName": "Master Bedroom"}]
+    },
+    {
+      "name": "enterprises/test-project/devices/DEV-MYSTERY",
+      "type": "sdm.devices.types.THERMOSTAT",
+      "traits": {
+        "sdm.devices.traits.Info": {"customName": ""},
+        "sdm.devices.traits.Connectivity": {"status": "OFFLINE"},
+        "sdm.devices.traits.ThermostatHvac": {"status": "OFF"},
+        "sdm.devices.traits.Temperature": {"ambientTemperatureCelsius": 17.0}
+      },
+      "parentRelations": [{"parent": "enterprises/test-project/structures/S1/rooms/R4", "displayName": "Office"}]
+    },
+    {
+      "name": "enterprises/test-project/devices/DEV-CAMERA",
+      "type": "sdm.devices.types.CAMERA",
+      "traits": {},
+      "parentRelations": [{"parent": "enterprises/test-project/structures/S1/rooms/R5", "displayName": "Guest Bedroom"}]
+    }
+  ]
+}

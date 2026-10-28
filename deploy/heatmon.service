@@ -1,0 +1,14 @@
+# systemd user service. Install steps are in README.md.
+[Unit]
+Description=Heating monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/heat-monitor
+ExecStart=%h/.local/bin/uv run heatmon run
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

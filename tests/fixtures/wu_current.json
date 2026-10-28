@@ -1,0 +1,33 @@
+{
+ "observations": [
+  {
+   "stationID": "KWACLEEL38",
+   "obsTimeUtc": "2026-10-28T13:45:09Z",
+   "obsTimeLocal": "2026-10-28 06:45:09",
+   "neighborhood": "Hidden Valley",
+   "softwareType": "weatherlink.com 1.10",
+   "country": "US",
+   "solarRadiation": null,
+   "lon": -120.744141,
+   "realtimeFrequency": null,
+   "epoch": 1793195109,
+   "lat": 47.179981,
+   "uv": null,
+   "winddir": 307,
+   "humidity": 95,
+   "qcStatus": 1,
+   "imperial": {
+    "temp": 35,
+    "heatIndex": 35,
+    "dewpt": 34,
+    "windChill": 35,
+    "windSpeed": 0,
+    "windGust": 1,
+    "pressure": 29.93,
+    "precipRate": 0.03,
+    "precipTotal": 0.05,
+    "elev": 2238
+   }
+  }
+ ]
+}
