@@ -5,7 +5,7 @@ import respx
 from sqlalchemy import select
 
 from heatmon.backfill import backfill
-from heatmon.db.models import WeatherObs
+from heatmon.db.models import DailySummary, WeatherObs
 from heatmon.db.session import insert_ignore
 from heatmon.sources import open_meteo, wunderground
 from heatmon.sources.wunderground import PWS_URL, WundergroundSource, parse_obs
@@ -45,14 +45,14 @@ async def test_fetch_history_204_means_no_data(cfg):
 async def test_open_meteo_fetch(cfg):
     respx.get(open_meteo.ARCHIVE_URL).respond(json=load_fixture("open_meteo_archive.json"))
     async with httpx.AsyncClient() as client:
-        rows = await open_meteo.fetch_hourly(client, cfg, date(2026, 10, 27), date(2026, 10, 27))
+        rows = await open_meteo.fetch_archive(client, cfg, date(2026, 10, 27), date(2026, 10, 27))
     assert len(rows) == 3  # the hour with no data yet is dropped
     assert rows[0]["ts"] == datetime(2026, 10, 27, 6, tzinfo=UTC)
     assert rows[0]["source"] == "open-meteo" and rows[0]["pressure_inhg"] == 30.401
 
 
 @respx.mock
-async def test_backfill_uses_station_first_and_fills_only_gaps(cfg, sessions):
+async def test_backfill_loads_station_and_open_meteo(cfg, sessions):
     def history(request):
         if request.url.params["date"] == "20261027":
             return httpx.Response(200, json=load_fixture("wu_history_all.json"))
@@ -68,7 +68,9 @@ async def test_backfill_uses_station_first_and_fills_only_gaps(cfg, sessions):
         rows = db.execute(select(WeatherObs.source, WeatherObs.ts).order_by(WeatherObs.ts)).all()
     om_hours = [ts.hour for src, ts in rows if src == "open-meteo"]
     assert [src for src, _ in rows].count("wu") == 3
-    assert om_hours == [6, 8]  # 07:00 UTC has station data, so Open-Meteo skips it
+    assert om_hours == [6, 7, 8]  # every published hour, for solar estimates
+    with sessions() as db:
+        assert db.get(DailySummary, date(2026, 10, 27)) is not None  # summaries rebuilt
 
 
 @respx.mock

@@ -25,6 +25,7 @@ SCOPE = "https://www.googleapis.com/auth/sdm.service"
 # google.com with ?code=... in the address bar, which works even when the app runs headless.
 REDIRECT_URI = "https://www.google.com"
 T = "sdm.devices.traits."
+_warned_unmatched: set[str] = set()  # warn once per thermostat per run, not every poll
 
 
 def auth_url(project_id: str, client_id: str) -> str:
@@ -71,8 +72,10 @@ def parse_devices(data: dict, ts: datetime, zones: list[Zone]) -> list[dict]:
         names = {tr.get(T + "Info", {}).get("customName", "")}
         names |= {p.get("displayName", "") for p in dev.get("parentRelations", [])}
         zone = _match_zone(device_id, names, zones)
-        if zone is None:
-            log.warning("Thermostat %s (%s) matches no zone in config.yaml", device_id, names)
+        if zone is None and device_id not in _warned_unmatched:
+            _warned_unmatched.add(device_id)
+            log.warning("Thermostat %s (%s) matches no zone in config.yaml; its readings are "
+                        "stored but not counted in any zone", device_id, names)
         eco = tr.get(T + "ThermostatEco", {})
         # In eco mode the normal setpoint is absent and the eco setpoint is in effect.
         if eco.get("mode") == "MANUAL_ECO":

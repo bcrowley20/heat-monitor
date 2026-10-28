@@ -8,9 +8,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from heatmon.config import Config
 from heatmon.db.session import record_status
 from heatmon.logs import scrub
+from heatmon.processing.summaries import SummariesJob
 from heatmon.sources.base import Source
 from heatmon.sources.centriconnect import CentriConnectSource
 from heatmon.sources.nest import NestSource
+from heatmon.sources.open_meteo import OpenMeteoSource
 from heatmon.sources.wunderground import WundergroundSource
 
 log = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ MAX_BACKOFF_S = 900
 
 
 def build_sources(cfg: Config, sessions: sessionmaker[Session]) -> list[Source]:
-    """Return the sources whose credentials are set. Skipped ones are logged."""
+    """Return the jobs to run: sources whose credentials are set, plus the keyless ones."""
     s = cfg.secrets
     candidates = [
         (NestSource, [s.google_client_id, s.google_client_secret, s.sdm_project_id]),
@@ -33,7 +35,7 @@ def build_sources(cfg: Config, sessions: sessionmaker[Session]) -> list[Source]:
             sources.append(cls(cfg, sessions))
         else:
             log.warning("%s: credentials missing from .env; not collecting", cls.name)
-    return sources
+    return sources + [OpenMeteoSource(cfg, sessions), SummariesJob(cfg, sessions)]
 
 
 def next_delay(interval_s: int, failures: int) -> int:

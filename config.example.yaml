@@ -9,11 +9,22 @@ station_id: KWACLEEL38
 # Station location, used for Open-Meteo gap filling.
 latitude: 47.180
 longitude: -120.744
+hdd_base_f: 65            # base temperature for heating degree days
 
 intervals:
   nest_s: 120             # minimum 60
   weather_s: 600
   tank_s: 7200
+  open_meteo_s: 3600      # solar estimates and temperature gap filling
+  summaries_s: 3600       # rebuild zone calls and daily summaries
+
+propane:
+  tank_size_gal: 1000
+  delivery_threshold_pct: 5   # a bigger jump in tank level counts as a fill
+  # Rough starting estimates. They only decide how usage between two tank readings
+  # is spread across the days in between.
+  base_gal_per_day: 1.0
+  gal_per_hdd: 0.15
 
 # Zones are matched to thermostats by the Nest room name or the thermostat's custom
 # name. If a thermostat doesn't match, the log names it; then set nest_device_id here.

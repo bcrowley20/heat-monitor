@@ -35,6 +35,17 @@ class Intervals(BaseModel):
     nest_s: int = Field(120, ge=60)
     weather_s: int = 600
     tank_s: int = 7200
+    open_meteo_s: int = 3600
+    summaries_s: int = 3600
+
+
+class Propane(BaseModel):
+    tank_size_gal: float = 1000
+    # A rise in tank level bigger than this is a fill, not sensor noise.
+    delivery_threshold_pct: float = 5
+    # Rough starting estimates, used only to spread usage between tank readings across days.
+    base_gal_per_day: float = 1.0
+    gal_per_hdd: float = 0.15
 
 
 class Config(BaseModel):
@@ -43,9 +54,11 @@ class Config(BaseModel):
     port: int = 8080
     timezone: str = "America/Los_Angeles"
     station_id: str = "KWACLEEL38"
+    hdd_base_f: float = 65
     latitude: float
     longitude: float
     intervals: Intervals = Intervals()
+    propane: Propane = Propane()
     zones: list[Zone] = []
     secrets: Secrets = Field(default_factory=Secrets, exclude=True)
 

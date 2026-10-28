@@ -8,9 +8,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
-from heatmon.db.models import SourceStatus, TankReading, ThermostatReading, WeatherObs, Zone
+from heatmon.db.models import (DailySummary, PropaneDelivery, SourceStatus, TankReading,
+                               ThermostatReading, WeatherObs, Zone, ZoneCall)
 
-SOURCES = {"nest": "nest_s", "wunderground": "weather_s", "centriconnect": "tank_s"}
+SOURCES = {"nest": "nest_s", "wunderground": "weather_s", "centriconnect": "tank_s",
+           "open-meteo": "open_meteo_s", "summaries": "summaries_s"}
 
 
 def c_to_f(c: float | None) -> float | None:
@@ -58,10 +60,11 @@ def status_data(cfg: Config, sessions: sessionmaker[Session], active: set[str]) 
             .order_by(Zone.name))]
 
         weather = [{
-            "time": local(w.ts), "source": w.source, "temp_f": w.temp_f,
+            "time": local(w.ts), "temp_f": w.temp_f,
             "humidity": w.humidity_pct, "dewpoint_f": w.dewpoint_f, "wind_mph": w.wind_mph,
             "gust_mph": w.gust_mph, "solar_wm2": w.solar_wm2, "pressure_inhg": w.pressure_inhg,
-        } for w in db.scalars(select(WeatherObs).order_by(WeatherObs.ts.desc()).limit(6))]
+        } for w in db.scalars(select(WeatherObs).where(WeatherObs.source == "wu")
+                              .order_by(WeatherObs.ts.desc()).limit(6))]
 
         tank = [{
             "time": local(t.ts), "level_pct": t.level_pct, "remaining_gal": t.remaining_gal,
@@ -69,7 +72,8 @@ def status_data(cfg: Config, sessions: sessionmaker[Session], active: set[str]) 
         } for t in db.scalars(select(TankReading).order_by(TankReading.ts.desc()).limit(6))]
 
         counts = [{"table": m.__tablename__, "rows": db.scalar(select(func.count()).select_from(m))}
-                  for m in (ThermostatReading, WeatherObs, TankReading)]
+                  for m in (ThermostatReading, WeatherObs, TankReading, ZoneCall,
+                            PropaneDelivery, DailySummary)]
 
     size_mb = sum(p.stat().st_size for p in cfg.data_dir.glob("heatmon.db*")) / 1e6
     return {"sources": sources, "thermostats": thermostats, "weather": weather, "tank": tank,
@@ -94,7 +98,7 @@ def register(cfg: Config, sessions: sessionmaker[Session], active: set[str]) -> 
             d = status_data(cfg, sessions, active)
             _table("Data sources", d["sources"])
             _table("Thermostats (latest)", d["thermostats"])
-            _table("Outdoor weather (latest)", d["weather"])
+            _table("Outdoor weather from the station (latest)", d["weather"])
             _table("Propane tank (latest)", d["tank"])
             _table(f"Stored rows (database {d['db_size_mb']} MB)", d["counts"])
 

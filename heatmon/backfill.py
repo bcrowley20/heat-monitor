@@ -1,8 +1,8 @@
-"""Load past weather: the home station's history first, then Open-Meteo for any gaps."""
+"""Load past weather from the home station and Open-Meteo, then rebuild summaries."""
 
 import asyncio
 import logging
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
 from heatmon.db.models import WeatherObs
-from heatmon.db.session import insert_ignore
-from heatmon.sources.open_meteo import fill_gaps
+from heatmon.db.session import insert_ignore, upsert
+from heatmon.processing.days import day_bounds
+from heatmon.processing.summaries import rebuild
+from heatmon.sources.open_meteo import fetch_archive
 from heatmon.sources.wunderground import fetch_history_day
 
 log = logging.getLogger(__name__)
@@ -25,9 +27,7 @@ PAUSE_S = 2.5
 
 
 def _station_rows_on(sessions: sessionmaker[Session], cfg: Config, day: date) -> int:
-    tz = ZoneInfo(cfg.timezone)
-    start = datetime.combine(day, time(), tz).astimezone(UTC)
-    end = datetime.combine(day + timedelta(days=1), time(), tz).astimezone(UTC)
+    start, end = day_bounds(day, ZoneInfo(cfg.timezone))
     with sessions() as db:
         return db.scalar(select(func.count()).select_from(WeatherObs).where(
             WeatherObs.source == "wu", WeatherObs.station_id == cfg.station_id,
@@ -49,5 +49,6 @@ async def backfill(cfg: Config, sessions: sessionmaker[Session], start: date, en
                 day += timedelta(days=1)
         else:
             log.warning("No WU API key; skipping station history")
-        n = await fill_gaps(client, cfg, sessions, start, end)
-        log.info("Open-Meteo filled %d hours with no station data", n)
+        n = upsert(sessions, WeatherObs, await fetch_archive(client, cfg, start, end))
+        log.info("Open-Meteo: stored %d hours", n)
+    rebuild(cfg, sessions, start)

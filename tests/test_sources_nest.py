@@ -93,3 +93,11 @@ async def test_poll_401_forces_token_refresh(cfg, sessions):
 async def test_poll_without_token_explains(cfg, sessions):
     with pytest.raises(RuntimeError, match="heatmon auth nest"):
         await nest.NestSource(cfg, sessions).poll()
+
+
+def test_unmatched_thermostat_warned_once(sessions, caplog, monkeypatch):
+    monkeypatch.setattr(nest, "_warned_unmatched", set())
+    zones = zones_by_id(sessions)
+    for _ in range(3):
+        nest.parse_devices(load_fixture("nest_devices.json"), TS, zones)
+    assert sum("DEV-MYSTERY" in r.message for r in caplog.records) == 1

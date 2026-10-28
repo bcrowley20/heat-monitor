@@ -32,9 +32,11 @@ To load past weather, run a backfill from the date of your oldest propane invoic
 uv run heatmon backfill --start 2023-10-01
 ```
 
-It loads the station's own history first. Then it uses Open-Meteo for any hours the station is missing, and marks those rows as Open-Meteo data. The key allows 1,500 calls a day and the backfill makes one call per day of history, so a range longer than about four years stops partway. Run it again the next day. Days already loaded are skipped.
+It loads the station's own history, then Open-Meteo's hourly data for the same dates, and then rebuilds the daily summaries. The key allows 1,500 calls a day and the backfill makes one call per day of history, so a range longer than about four years stops partway. Run it again the next day. Days already loaded are skipped.
 
 KWACLEEL38's history starts on 2017-04-15 and has one reading every 15 minutes. The station has no solar sensor, so its solar readings are empty.
+
+Open-Meteo is a free weather service that needs no key. The app stores its data for every hour, both from the backfill and from an hourly update while running. Solar figures come from Open-Meteo for every day. Outdoor temperature comes from the station, and Open-Meteo fills in only the hours the station missed. Each daily summary records how many of its hours came from Open-Meteo.
 
 ## Nest thermostats
 
@@ -58,6 +60,22 @@ The device ID and device authentication code are on the setup card that came wit
 `uv run heatmon run` collects data and serves the web pages on port 8080. Open `http://<fedora-box>:8080` from any computer on the home network.
 
 For debugging, `heatmon collect` only collects and `heatmon serve` only serves pages.
+
+## Calculations
+
+Every hour the app rebuilds the last two days of results from the raw readings. That covers calls for heat, propane fills and the daily summaries. To rebuild a longer stretch, for example after changing a setting in `config.yaml`, run:
+
+```sh
+uv run heatmon rebuild-summaries --start 2026-10-01
+```
+
+Leave out `--start` to rebuild everything.
+
+A zone's call for heat starts when its thermostat first reports HEATING and ends when it stops. Each change is placed halfway between the two readings around it. If readings stop for more than three poll intervals during a call, the call ends at the last reading and is flagged. The daily "any zone calling" time counts overlapping calls once. It shows when the system had demand, which is not the same as burner time.
+
+Heating degree days use a 65°F base, set by `hdd_base_f`. Each hour adds max(0, 65 minus that hour's average temperature) divided by 24. A day needs at least 18 hours of temperatures to get a figure, so today's stays blank until evening.
+
+The tank monitor reports only two or three times a day. Gallons used between two readings are spread across the days in between. Colder days get a bigger share, using the rough estimates under `propane` in `config.yaml`. A day only gets a figure when readings cover all of it. A rise of more than 5% is recorded as a fill, and that day gets no figure because part of its usage is unknown. Smaller rises are sensor noise and count as zero. A 1% change is 10 gallons on this tank, so daily figures are rough. Weekly totals are more reliable.
 
 Fedora's firewall blocks the port until you open it:
 

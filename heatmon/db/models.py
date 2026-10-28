@@ -1,5 +1,6 @@
 """Database tables. Timestamps are stored as UTC ISO-8601 text."""
 
+import datetime as dt
 from datetime import UTC, datetime
 
 from sqlalchemy import ForeignKey, Index, String, Text, TypeDecorator
@@ -86,3 +87,55 @@ class SourceStatus(Base):
     last_success_ts: Mapped[datetime | None]
     last_error_ts: Mapped[datetime | None]
     last_error_msg: Mapped[str | None] = mapped_column(Text)
+
+
+class ZoneCall(Base):
+    """A period when a zone's thermostat called for heat. Rebuilt from thermostat_readings."""
+
+    __tablename__ = "zone_calls"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    zone_id: Mapped[int] = mapped_column(ForeignKey("zones.id"))
+    start_ts: Mapped[datetime]
+    end_ts: Mapped[datetime]
+    duration_s: Mapped[int]
+    start_ambient_c: Mapped[float | None]
+    end_ambient_c: Mapped[float | None]
+    setpoint_c: Mapped[float | None]
+    open: Mapped[bool]  # still calling at the latest reading
+    gap_closed: Mapped[bool]  # readings stopped mid-call, so the end time is the last reading
+    __table_args__ = (Index("ix_zone_calls_zone_start", "zone_id", "start_ts"),
+                      Index("ix_zone_calls_end", "end_ts"))
+
+
+class PropaneDelivery(Base):
+    __tablename__ = "propane_deliveries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    date: Mapped[dt.date]
+    gallons: Mapped[float]
+    price_per_gal: Mapped[float | None]
+    total_cost: Mapped[float | None]
+    tank_pct_before: Mapped[float | None]
+    tank_pct_after: Mapped[float | None]
+    source: Mapped[str]  # 'invoice' or 'detected' (a jump in tank level)
+    notes: Mapped[str | None]
+
+
+class DailySummary(Base):
+    """One row per local day. Rebuilt from the raw tables."""
+
+    __tablename__ = "daily_summary"
+    date: Mapped[dt.date] = mapped_column(primary_key=True)
+    hdd: Mapped[float | None]
+    mean_temp_f: Mapped[float | None]
+    min_temp_f: Mapped[float | None]
+    max_temp_f: Mapped[float | None]
+    solar_kwh_m2: Mapped[float | None]
+    weather_hours: Mapped[int]  # hours with an outdoor temperature
+    open_meteo_hours: Mapped[int]  # of those, hours filled from Open-Meteo
+    any_zone_call_min: Mapped[float]
+    total_zone_call_min: Mapped[float]
+    zone_call_count: Mapped[int]
+    per_zone_call_min_json: Mapped[str] = mapped_column(Text)
+    per_zone_call_count_json: Mapped[str] = mapped_column(Text)
+    gal_used_est: Mapped[float | None]
+    gal_per_hdd: Mapped[float | None]

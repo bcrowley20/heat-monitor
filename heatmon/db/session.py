@@ -59,6 +59,21 @@ def insert_ignore(sessions: sessionmaker[Session], model: type[Base], rows: list
         return result.rowcount
 
 
+def upsert(sessions: sessionmaker[Session], model: type[Base], rows: list[dict]) -> int:
+    """Insert rows, replacing any that already exist with the same primary key."""
+    if not rows:
+        return 0
+    table = model.__table__
+    pk = [c.name for c in table.primary_key]
+    stmt = insert(model)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=pk,
+        set_={c.name: stmt.excluded[c.name] for c in table.columns if c.name not in pk})
+    with sessions.begin() as db:
+        db.connection().execute(stmt, rows)
+    return len(rows)
+
+
 def record_status(sessions: sessionmaker[Session], source: str, error: str | None = None) -> None:
     now = datetime.now(UTC)
     with sessions.begin() as db:

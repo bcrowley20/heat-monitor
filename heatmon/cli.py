@@ -1,4 +1,4 @@
-"""Command line: heatmon auth nest | run | serve | collect | backfill"""
+"""Command line: heatmon auth nest | run | serve | collect | backfill | rebuild-summaries"""
 
 import argparse
 import asyncio
@@ -26,6 +26,8 @@ def main(argv: list[str] | None = None) -> None:
     bf = sub.add_parser("backfill", help="load past weather for a date range")
     bf.add_argument("--start", type=date.fromisoformat, required=True, help="YYYY-MM-DD")
     bf.add_argument("--end", type=date.fromisoformat, help="YYYY-MM-DD (default: yesterday)")
+    rb = sub.add_parser("rebuild-summaries", help="recalculate zone calls, fills and daily summaries")
+    rb.add_argument("--start", type=date.fromisoformat, help="YYYY-MM-DD (default: all data)")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -49,6 +51,9 @@ def main(argv: list[str] | None = None) -> None:
             from heatmon.backfill import backfill
             end = args.end or date.today() - timedelta(days=1)
             asyncio.run(backfill(cfg, sessions, args.start, end))
+        case "rebuild-summaries":
+            from heatmon.processing.summaries import rebuild
+            log.info("Rebuilt %d days", rebuild(cfg, sessions, args.start))
 
 
 def _auth_nest(cfg) -> None:
