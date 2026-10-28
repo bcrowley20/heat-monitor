@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
 from heatmon.web import data
-from heatmon.web.components import (AXIS, CARD, GRID, HEATING_BAND, INK, INK_2, MUTED, SERIES, chart, date_range,
-                                    event_markers, frame, layout, stat, table)
+from heatmon.web.components import (AXIS, CARD, GRID, HEATING_BAND, INK, INK_2, MUTED, SERIES, SUN_BAND, chart,
+                                    date_range, event_markers, frame, layout, stat, table)
 
 MIN_FIT_DAYS = 14
 
@@ -159,7 +159,10 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
         frame(cfg, "/zones", c.start, c.end)
         readings, calls, events = data.thermostat(c), data.zone_calls(c), data.events(c)
         history = data.history_heating(c)
-        outdoor = [h for h in data.weather_hourly(c) if h["temp_f"] is not None]
+        hours_wx = data.weather_hourly(c)
+        outdoor = [h for h in hours_wx if h["temp_f"] is not None]
+        sun = [h for h in hours_wx if h["solar_wm2"] is not None]
+        sun_max = max((h["solar_wm2"] for h in sun), default=0) or 1
         for i, z in enumerate(data.zone_names(c)):
             rs = [r for r in readings if r["zone"] == z]
             zc = [k for k in calls if k["zone"] == z]
@@ -169,20 +172,30 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
             for k in zc + [h for h in history if h["zone"] == z]:
                 band_x += [k["start"], k["start"], k["end"], k["end"], k["start"], None]
                 band_y += [lo, hi, hi, lo, lo, None]
+            # Sun sits on the hidden base axis so Plotly draws it behind the temperature lines.
             traces = [
+                {"type": "scatter", "mode": "lines", "name": "Sun", "x": [h["time"] for h in sun],
+                 "y": [h["solar_wm2"] for h in sun], "fill": "tozeroy", "fillcolor": SUN_BAND,
+                 "line": {"width": 0}, "hovertemplate": "%{y:.0f} W/m²"},
                 {"type": "scatter", "mode": "lines", "name": "Calling for heat", "x": band_x, "y": band_y,
-                 "fill": "toself", "fillcolor": HEATING_BAND, "line": {"width": 0}, "hoverinfo": "skip"},
+                 "yaxis": "y2", "fill": "toself", "fillcolor": HEATING_BAND, "line": {"width": 0},
+                 "hoverinfo": "skip"},
                 {"type": "scatter", "mode": "lines", "name": "Setpoint", "x": [r["time"] for r in rs],
-                 "y": [r["setpoint_f"] for r in rs], "line": {"color": INK_2, "width": 1.5, "shape": "hv"}},
+                 "y": [r["setpoint_f"] for r in rs], "yaxis": "y2",
+                 "line": {"color": INK_2, "width": 1.5, "shape": "hv"}},
                 {"type": "scatter", "mode": "lines", "name": "Room", "x": [r["time"] for r in rs],
-                 "y": [r["temp_f"] for r in rs], "line": {"color": SERIES[i], "width": 2}},
+                 "y": [r["temp_f"] for r in rs], "yaxis": "y2", "line": {"color": SERIES[i], "width": 2}},
                 {"type": "scatter", "mode": "lines", "name": "Outdoor", "x": [h["time"] for h in outdoor],
-                 "y": [h["temp_f"] for h in outdoor], "yaxis": "y2", "line": {"color": MUTED, "width": 1.5}},
+                 "y": [h["temp_f"] for h in outdoor], "yaxis": "y3", "line": {"color": MUTED, "width": 1.5}},
             ]
-            lay = layout(380, xaxis={"anchor": "y2"},
-                         yaxis={"domain": [0.36, 1], "range": [lo, hi], "title": {"text": "Indoor °F"}},
-                         yaxis2={"domain": [0, 0.26], "title": {"text": "Outdoor °F"}, "gridcolor": GRID,
-                                 "linecolor": AXIS, "zeroline": False, "tickfont": {"color": MUTED}})
+            temp_axis = {"linecolor": AXIS, "zeroline": False, "tickfont": {"color": MUTED},
+                         "title": {"font": {"color": INK_2, "size": 12}}}
+            lay = layout(380, margin={"r": 56},
+                         yaxis={"visible": False, "range": [0, sun_max * 1.05], "fixedrange": True},
+                         yaxis2={**temp_axis, "overlaying": "y", "side": "left", "gridcolor": GRID,
+                                 "range": [lo, hi], "title": {**temp_axis["title"], "text": "Indoor °F"}},
+                         yaxis3={**temp_axis, "overlaying": "y", "side": "right", "showgrid": False,
+                                 "title": {**temp_axis["title"], "text": "Outdoor °F"}})
             hours = sum(k["minutes"] for k in zc) / 60
             overs = [k["overshoot_f"] for k in zc if k["overshoot_f"] is not None]
             hours += sum((datetime.fromisoformat(h["end"]) - datetime.fromisoformat(h["start"])).total_seconds()
