@@ -139,3 +139,14 @@ class DailySummary(Base):
     per_zone_call_count_json: Mapped[str] = mapped_column(Text)
     gal_used_est: Mapped[float | None]
     gal_per_hdd: Mapped[float | None]
+
+
+class Event(Base):
+    """Something that happened to the house or heating system. Marked on charts."""
+
+    __tablename__ = "events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ts: Mapped[datetime]
+    type: Mapped[str]  # setting_change, delivery, service, fireplace, away, note
+    title: Mapped[str]
+    details: Mapped[str | None] = mapped_column(Text)

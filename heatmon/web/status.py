@@ -8,15 +8,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
+from heatmon.web.components import frame
+from heatmon.web.data import c_to_f
 from heatmon.db.models import (DailySummary, PropaneDelivery, SourceStatus, TankReading,
                                ThermostatReading, WeatherObs, Zone, ZoneCall)
 
 SOURCES = {"nest": "nest_s", "wunderground": "weather_s", "centriconnect": "tank_s",
            "open-meteo": "open_meteo_s", "summaries": "summaries_s"}
-
-
-def c_to_f(c: float | None) -> float | None:
-    return None if c is None else round(c * 9 / 5 + 32, 1)
 
 
 def status_data(cfg: Config, sessions: sessionmaker[Session], active: set[str]) -> dict:
@@ -102,6 +100,6 @@ def register(cfg: Config, sessions: sessionmaker[Session], active: set[str]) -> 
             _table("Propane tank (latest)", d["tank"])
             _table(f"Stored rows (database {d['db_size_mb']} MB)", d["counts"])
 
-        ui.label("Heating Monitor: Status").classes("text-2xl font-semibold")
+        frame(cfg, "/status")
         content()
         ui.timer(30, content.refresh)

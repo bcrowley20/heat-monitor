@@ -61,6 +61,18 @@ The device ID and device authentication code are on the setup card that came wit
 
 For debugging, `heatmon collect` only collects and `heatmon serve` only serves pages.
 
+## Pages
+
+**Overview** shows current conditions, today against yesterday, and propane per degree day by week. **Zones** has one chart per zone: room temperature and setpoint on top, with shading while the zone calls for heat, and outdoor temperature in a panel below. Its table lists every call with its overshoot, which is the highest the room rose above its setpoint in the 6 hours after the call ended. **Runtime** shows minutes calling per day and per zone, and how calling time tracks degree days. **Propane** shows tank readings, fills, weekly usage, and how usage tracks degree days. **Weather** shows temperature, sunshine and wind. **Status** shows each data source's health.
+
+Every page except Overview and Status has a date range picker at the top. The default is the last 14 days. Grey lines with a small marker show events, such as setting changes. Hover over the marker to read the event.
+
+The scatter charts split days into settings periods. Each setting change starts a new period, and changes on the same day count as one. The day of a change belongs to the period before it. Propane is plotted as 7-day averages, because the tank reports in whole percents and single days are too coarse.
+
+## Data API
+
+Every table has a "Download CSV" link. The same data is available as JSON at `/api/<name>?start=YYYY-MM-DD&end=YYYY-MM-DD`, or as CSV at `/api/<name>.csv`. The names are `daily`, `thermostat`, `zone_calls`, `weather_hourly`, `tank`, `deliveries`, `weekly_propane` and `events`.
+
 ## Calculations
 
 Every hour the app rebuilds the last two days of results from the raw readings. That covers calls for heat, propane fills and the daily summaries. To rebuild a longer stretch, for example after changing a setting in `config.yaml`, run:

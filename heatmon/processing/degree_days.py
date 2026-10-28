@@ -76,8 +76,8 @@ def day_weather(hourly: dict[datetime, tuple[float, str]], day: date, tz, base_f
     return DayWeather(
         hdd=round(hdd, 2) if len(vals) >= MIN_HOURS and hi <= now else None,
         mean_f=round(mean(temps), 1),
-        min_f=min(temps),
-        max_f=max(temps),
+        min_f=round(min(temps), 1),
+        max_f=round(max(temps), 1),
         hours=len(vals),
         open_meteo_hours=sum(1 for _, src in vals if src == "open-meteo"),
     )
