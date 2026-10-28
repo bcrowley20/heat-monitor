@@ -158,6 +158,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
         c = ctx(start, end)
         frame(cfg, "/zones", c.start, c.end)
         readings, calls, events = data.thermostat(c), data.zone_calls(c), data.events(c)
+        history = data.history_heating(c)
         outdoor = [h for h in data.weather_hourly(c) if h["temp_f"] is not None]
         for i, z in enumerate(data.zone_names(c)):
             rs = [r for r in readings if r["zone"] == z]
@@ -165,7 +166,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
             vals = [v for r in rs for v in (r["temp_f"], r["setpoint_f"]) if v is not None]
             lo, hi = (min(vals) - 1, max(vals) + 1) if vals else (60, 75)
             band_x, band_y = [], []
-            for k in zc:
+            for k in zc + [h for h in history if h["zone"] == z]:
                 band_x += [k["start"], k["start"], k["end"], k["end"], k["start"], None]
                 band_y += [lo, hi, hi, lo, lo, None]
             traces = [
@@ -184,7 +185,10 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                                  "linecolor": AXIS, "zeroline": False, "tickfont": {"color": MUTED}})
             hours = sum(k["minutes"] for k in zc) / 60
             overs = [k["overshoot_f"] for k in zc if k["overshoot_f"] is not None]
-            title = (f"{z}: {len(zc)} calls, {hours:.1f} h calling"
+            hours += sum((datetime.fromisoformat(h["end"]) - datetime.fromisoformat(h["start"])).total_seconds()
+                         for h in history if h["zone"] == z) / 3600
+            # Calls are only counted from live data; Takeout records give heating time alone.
+            title = (f"{z}: " + (f"{len(zc)} calls, " if zc else "") + f"{hours:.1f} h calling"
                      + (f", average overshoot {sum(overs) / len(overs):.1f}°F" if overs else ""))
             chart(title, traces, _with_events(lay, events))
         table("Calls for heat (overshoot: highest °F above setpoint in the 6 hours after a call)",
@@ -203,8 +207,10 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
         bars.append({"type": "scatter", "mode": "lines+markers", "name": "Any zone calling", "x": x,
                      "y": [d["any_zone_call_min"] for d in days], "line": {"color": INK, "width": 2},
                      "marker": {"size": 6}, "hovertemplate": "%{y:.0f} min"})
+        estimated = any(d["runtime_source"] == "history" for d in days)
         chart("Minutes calling for heat per day (today so far). Bars add up each zone; "
-              "the line counts overlapping calls once.",
+              "the line counts overlapping calls once."
+              + (" On days from Google Takeout the line is an estimate." if estimated else ""),
               bars, _with_events(layout(340, barmode="stack", bargap=0.25, legend={"traceorder": "normal"},
                                         yaxis={"title": {"text": "minutes"}}), events))
 
@@ -220,7 +226,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                    "marker": {"size": 6}} for i, z in enumerate(names)]
         chart("Calls per day by zone, today so far (many short calls suggest short cycling)", counts,
               _with_events(layout(300, yaxis={"title": {"text": "calls"}}), events))
-        keep = ["date", "hdd", "any_zone_call_min", "total_zone_call_min", "zone_calls"]
+        keep = ["date", "hdd", "any_zone_call_min", "total_zone_call_min", "zone_calls", "runtime_source"]
         keep += [f"{z} {kind}" for z in names for kind in ("min", "calls")]
         table("Daily runtime", [{k: d[k] for k in keep} for d in days], "daily", c.start, c.end)
 

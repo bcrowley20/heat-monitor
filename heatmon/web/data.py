@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
-from heatmon.db.models import (DailySummary, Event, PropaneDelivery, SourceStatus, TankReading,
+from heatmon.db.models import (DailySummary, Event, PropaneDelivery, SourceStatus, TankReading, ThermostatHistory,
                                ThermostatReading, WeatherObs, Zone, ZoneCall)
 from heatmon.processing import baseline
 from heatmon.processing.days import day_bounds, local_date
@@ -46,8 +46,9 @@ class Ctx:
 
 
 def zone_names(c: Ctx) -> list[str]:
-    """Zones in config order, which also fixes each zone's chart color."""
-    return [z.name for z in c.cfg.zones]
+    """Zones in config order, which also fixes each zone's chart color. A retired zone is
+    listed only for ranges that start before it was retired."""
+    return [z.name for z in c.cfg.zones if not z.retired or c.start < z.retired]
 
 
 # ---------- datasets ----------
@@ -66,6 +67,7 @@ def daily(c: Ctx) -> list[dict]:
             "open_meteo_hours": r.open_meteo_hours, "weather_hours": r.weather_hours,
             "any_zone_call_min": r.any_zone_call_min, "total_zone_call_min": r.total_zone_call_min,
             "zone_calls": r.zone_call_count, "gal_used_est": r.gal_used_est, "gal_per_hdd": r.gal_per_hdd,
+            "runtime_source": r.runtime_source,
         }
         for z in zone_names(c):
             row[f"{z} min"] = minutes.get(z, 0)
@@ -81,10 +83,31 @@ def thermostat(c: Ctx) -> list[dict]:
             .join(Zone, Zone.id == ThermostatReading.zone_id)
             .where(ThermostatReading.ts >= c.lo, ThermostatReading.ts < c.hi)
             .order_by(ThermostatReading.ts)).all()
-    return [{"time": c.local(r.ts), "zone": name, "temp_f": c_to_f(r.ambient_c),
+        history = db.execute(
+            select(Zone.name, ThermostatHistory)
+            .join(Zone, Zone.id == ThermostatHistory.zone_id)
+            .where(ThermostatHistory.interval_start >= c.lo, ThermostatHistory.interval_start < c.hi)
+            .order_by(ThermostatHistory.interval_start)).all()
+    out = [{"time": c.local(h.interval_start), "zone": name, "temp_f": c_to_f(h.indoor_c),
+            "setpoint_f": c_to_f(h.setpoint_c), "humidity_pct": _r(h.humidity_pct),
+            "hvac_status": f"heating {h.heating_s // 60} min" if h.heating_s else "OFF",
+            "mode": None, "eco_mode": None, "source": "takeout"} for name, h in history]
+    out += [{"time": c.local(r.ts), "zone": name, "temp_f": c_to_f(r.ambient_c),
              "setpoint_f": c_to_f(r.setpoint_heat_c), "humidity_pct": r.humidity_pct,
-             "hvac_status": r.hvac_status, "mode": r.mode, "eco_mode": r.eco_mode}
+             "hvac_status": r.hvac_status, "mode": r.mode, "eco_mode": r.eco_mode, "source": "live"}
             for name, r in rows]
+    return out
+
+
+def history_heating(c: Ctx) -> list[dict]:
+    """Takeout heating as (zone, start, end) blocks. Each 15-minute record's heating time is
+    drawn from the start of its interval, since the record doesn't say when it happened."""
+    with c.sessions() as db:
+        rows = db.execute(select(Zone.name, ThermostatHistory.interval_start, ThermostatHistory.heating_s)
+                          .join(Zone, Zone.id == ThermostatHistory.zone_id)
+                          .where(ThermostatHistory.interval_start >= c.lo, ThermostatHistory.interval_start < c.hi,
+                                 ThermostatHistory.heating_s > 0)).all()
+    return [{"zone": z, "start": c.local(s), "end": c.local(s + timedelta(seconds=secs))} for z, s, secs in rows]
 
 
 def zone_calls(c: Ctx) -> list[dict]:
@@ -334,20 +357,25 @@ def excluded_days(c: Ctx, types: tuple[str, ...] = ("fireplace", "away")) -> set
 
 
 def first_thermostat_day(c: Ctx) -> date | None:
+    """The first day of live polling."""
     with c.sessions() as db:
-        first = db.scalar(select(func.min(ThermostatReading.ts)))
+        first = db.scalar(select(func.min(ThermostatReading.ts)).where(ThermostatReading.zone_id.is_not(None)))
     return local_date(first, c.tz) if first else None
 
 
 def period_stats(c: Ctx, exclude: set[date], fit: baseline.Baseline | None, price: float | None) -> dict:
     """Totals and rates for one comparison period. Days in `exclude` are left out."""
-    first_t = first_thermostat_day(c)
+    first_live = first_thermostat_day(c)
     days = [d for d in daily(c) if date.fromisoformat(d["date"]) not in exclude and d["hdd"] is not None]
     gal_days = [d for d in days if d["gal_used_est"] is not None]
-    # Days before the thermostats were connected have no runtime, not zero runtime.
-    t_days = [d for d in days if first_t and date.fromisoformat(d["date"]) > first_t]
+    # Days without thermostat data have unknown runtime, not zero. Live polling's first day
+    # is partial, so it is left out too.
+    t_days = [d for d in days if d["runtime_source"] == "history" or (
+        d["runtime_source"] == "live" and first_live and date.fromisoformat(d["date"]) > first_live)]
     gallons, gal_hdd = sum(d["gal_used_est"] for d in gal_days), sum(d["hdd"] for d in gal_days)
     t_hdd, call_min = sum(d["hdd"] for d in t_days), sum(d["any_zone_call_min"] for d in t_days)
+    zone_min = sum(d["total_zone_call_min"] for d in t_days)
+    zone_fit = fit_line([d["hdd"] for d in t_days], [d["total_zone_call_min"] for d in t_days])
     bins = [gal_days[i:i + 7] for i in range(0, len(gal_days), 7)]
     bins = [b for b in bins if len(b) >= 4]
     gal_fit = fit_line([mean(d["hdd"] for d in b) for b in bins], [mean(d["gal_used_est"] for d in b) for b in bins])
@@ -367,6 +395,9 @@ def period_stats(c: Ctx, exclude: set[date], fit: baseline.Baseline | None, pric
         "baseline_gallons": _r(predicted),
         "vs_baseline_pct": _r((gallons - predicted) / predicted * 100) if predicted else None,
         "cost_per_hdd": _r(ratio * price, 2) if ratio is not None and price else None,
+        "zone_min_per_hdd": _r(zone_min / t_hdd) if t_hdd >= 10 else None,
+        "zone_min_per_hdd_fit": _r(zone_fit.slope) if zone_fit and len(t_days) >= 5 else None,
+        "estimated_days": sum(1 for d in t_days if d["runtime_source"] == "history"),
         "call_min_per_hdd": _r(call_min / t_hdd) if t_hdd >= 10 else None,
         "call_min_per_hdd_fit": _r(call_fit.slope) if call_fit and len(t_days) >= 5 else None,
         "calls_per_day": _r(mean(d["zone_calls"] for d in t_days)) if t_days else None,
@@ -376,6 +407,8 @@ def period_stats(c: Ctx, exclude: set[date], fit: baseline.Baseline | None, pric
 
 def _pct(new: float, old: float) -> str:
     change = (new - old) / old * 100
+    if abs(change) < 1:
+        return "about the same"
     return f"{abs(change):.0f}% {'lower' if change < 0 else 'higher'}"
 
 
@@ -393,9 +426,15 @@ def compare_summary(a: dict, b: dict, a_name: str, b_name: str) -> list[str]:
             out.append(f"{name} used {p['gallons']} gallons. The invoice baseline predicts {p['baseline_gallons']} "
                        f"for the same days and weather, so {name} was {abs(p['vs_baseline_pct']):.0f}% "
                        f"{'below' if p['vs_baseline_pct'] < 0 else 'above'} it.")
+    if a["zone_min_per_hdd"] and b["zone_min_per_hdd"]:
+        out.append(f"Zone calling time per degree day, all zones added up, was "
+                   f"{_pct(b['zone_min_per_hdd'], a['zone_min_per_hdd'])} in {b_name} "
+                   f"({b['zone_min_per_hdd']} against {a['zone_min_per_hdd']} minutes).")
     if a["call_min_per_hdd"] and b["call_min_per_hdd"]:
-        out.append(f"Calling time per degree day was {_pct(b['call_min_per_hdd'], a['call_min_per_hdd'])} in "
-                   f"{b_name} ({b['call_min_per_hdd']} against {a['call_min_per_hdd']} minutes).")
+        estimated = " (estimated from Google Takeout's 15-minute records for some days)" if (
+            a["estimated_days"] or b["estimated_days"]) else ""
+        out.append(f"Time with any zone calling per degree day was "
+                   f"{_pct(b['call_min_per_hdd'], a['call_min_per_hdd'])} in {b_name}{estimated}.")
     if not out:
         out.append("There isn't enough data in these periods to compare yet.")
 
@@ -403,7 +442,7 @@ def compare_summary(a: dict, b: dict, a_name: str, b_name: str) -> list[str]:
     coverage = {}
     if a["gal_per_hdd"] and b["gal_per_hdd"]:
         coverage["propane"] = min(a["days_with_propane"], b["days_with_propane"])
-    if a["call_min_per_hdd"] and b["call_min_per_hdd"]:
+    if a["zone_min_per_hdd"] and b["zone_min_per_hdd"]:
         coverage["calling time"] = min(a["days_with_thermostats"], b["days_with_thermostats"])
     if not coverage:
         coverage["weather"] = min(a["days"], b["days"])

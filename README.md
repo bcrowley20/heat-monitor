@@ -85,6 +85,20 @@ The columns are in `deliveries_template.csv`. Dates can be `2025-10-30` or `10/3
 
 The invoices give a baseline from before the monitor existed. Usage between two deliveries is the later delivery's gallons, corrected when the two fills ended at different tank levels. The app then fits gallons used = base load × days + gallons per degree day × degree days across all delivery periods. The base load covers hot water, cooking and the fireplace. The baseline needs weather history covering the invoices, so run the backfill from the first invoice date. The Propane page shows the baseline, totals by heating season, and the usage between each pair of deliveries. Any period with an unusually high daily rate is flagged, because that usually means a wrong date or a copied row.
 
+## Nest history from Google Takeout
+
+The Nest API has no history, but a Google Takeout export of your Nest data does. It has a record for every 15 minutes going back about two years: minutes spent heating, room temperature, setpoint and humidity. Request it at <https://takeout.google.com> (choose only "Nest"), copy the zip to the server, and run:
+
+```sh
+uv run heatmon import-nest-takeout ~/takeout-20261025T123003Z-1-001.zip
+```
+
+It matches each thermostat to a zone by its Nest room name or label and skips any that don't match, such as a thermostat in another building. It then rebuilds the daily summaries. Running it again, or importing a newer export, only adds records it doesn't already have.
+
+Days before live polling started use these records. Minutes calling per zone are exact. Call counts and "any zone calling" time are estimates, because a record doesn't say when in its 15 minutes the heating ran. So the Compare page leads with zone-minutes per degree day, which is exact for both kinds of data. A history day is only used when at least 90% of its records are there; an export's first and last days are usually partial.
+
+A zone that no longer exists stays in `config.yaml` with the day it was retired, like Master Bath. Its history still counts up to that day.
+
 ## Data API
 
 Every table has a "Download CSV" link. The same data is available as JSON at `/api/<name>?start=YYYY-MM-DD&end=YYYY-MM-DD`, or as CSV at `/api/<name>.csv`. The names are `daily`, `thermostat`, `zone_calls`, `weather_hourly`, `tank`, `deliveries`, `weekly_propane`, `events`, `delivery_intervals` and `baseline_seasons`.

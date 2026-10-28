@@ -10,17 +10,21 @@ from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
-from heatmon.db.models import (DailySummary, PropaneDelivery, TankReading, ThermostatReading,
-                               WeatherObs, Zone, ZoneCall)
+from heatmon.db.models import (DailySummary, PropaneDelivery, TankReading, ThermostatHistory,
+                               ThermostatReading, WeatherObs, Zone, ZoneCall)
 from heatmon.processing.days import day_bounds, local_date
 from heatmon.processing.degree_days import HOUR, daily_solar, day_weather, hourly_temps
 from heatmon.processing.propane import Interval, Reading, daily_usage, tank_intervals
 from heatmon.processing.zone_calls import Sample, derive_calls, minutes_on_day
+from heatmon.processing.zone_history import history_by_day
 
 # Readings this far before the rebuild window are re-read so calls that started
 # before the window keep their true start time.
 LOOKBACK = timedelta(days=2)
 RECENT_DAYS = 2
+# A history day needs records for this share of its 15-minute intervals. The export's
+# first and last days are usually partial.
+HISTORY_MIN_COVERAGE = 0.9
 # A detected fill this close to an invoiced delivery is the same delivery.
 INVOICE_MATCH_DAYS = 3
 
@@ -34,6 +38,7 @@ def rebuild(cfg: Config, sessions: sessionmaker[Session], start: date | None = N
     if start is None:
         with sessions() as db:
             firsts = [db.scalar(select(func.min(m.ts))) for m in (ThermostatReading, WeatherObs, TankReading)]
+            firsts.append(db.scalar(select(func.min(ThermostatHistory.interval_start))))
         firsts = [f for f in firsts if f is not None]
         if not firsts:
             return 0
@@ -107,6 +112,13 @@ def _rebuild_daily(cfg: Config, sessions: sessionmaker[Session], days: list[date
         calls = db.execute(select(Zone.name, ZoneCall.start_ts, ZoneCall.end_ts)
                            .join(Zone, Zone.id == ZoneCall.zone_id)
                            .where(ZoneCall.end_ts > lo, ZoneCall.start_ts < hi)).all()
+        first_live = db.scalar(select(func.min(ThermostatReading.ts)).where(ThermostatReading.zone_id.is_not(None)))
+        history = history_by_day(db.execute(
+            select(Zone.name, ThermostatHistory.interval_start, ThermostatHistory.heating_s)
+            .join(Zone, Zone.id == ThermostatHistory.zone_id)
+            .where(ThermostatHistory.interval_start >= lo, ThermostatHistory.interval_start < hi)).all(), tz)
+    # Live polling wins from its first day on; earlier days use the Takeout history.
+    first_live_day = local_date(first_live, tz) if first_live else None
 
     hourly = hourly_temps([(ts, src, t) for ts, src, t, _ in obs])
     solar = daily_solar([(ts, s) for ts, src, _, s in obs if src == "open-meteo"], tz)
@@ -124,12 +136,21 @@ def _rebuild_daily(cfg: Config, sessions: sessionmaker[Session], days: list[date
 
     rows = []
     for d in days:
-        todays = calls_by_day.get(d, [])
-        by_zone = defaultdict(list)
-        for zone, a, b in todays:
-            by_zone[zone].append((a, b))
-        per_zone_min = {z: round(minutes_on_day(iv, d, tz), 1) for z, iv in sorted(by_zone.items())}
-        per_zone_count = Counter(z for z, a, _ in todays if local_date(a, tz) == d)
+        if first_live_day and d >= first_live_day:
+            todays = calls_by_day.get(d, [])
+            by_zone = defaultdict(list)
+            for zone, a, b in todays:
+                by_zone[zone].append((a, b))
+            per_zone_min = {z: round(minutes_on_day(iv, d, tz), 1) for z, iv in sorted(by_zone.items())}
+            per_zone_count = Counter(z for z, a, _ in todays if local_date(a, tz) == d)
+            any_zone = minutes_on_day([(a, b) for _, a, b in todays], d, tz)
+            source = "live"
+        elif d in history and history[d].quarters >= HISTORY_MIN_COVERAGE * hours_in(d, tz) * 4:
+            h = history[d]
+            per_zone_min = {z: round(m, 1) for z, m in sorted(h.per_zone_min.items())}
+            per_zone_count, any_zone, source = h.per_zone_count, h.any_zone_min, "history"
+        else:
+            per_zone_min, per_zone_count, any_zone, source = {}, {}, 0.0, None
         w, gal = weather[d], gallons.get(d)
         rows.append({
             "date": d,
@@ -140,7 +161,7 @@ def _rebuild_daily(cfg: Config, sessions: sessionmaker[Session], days: list[date
             "solar_kwh_m2": round(solar[d], 2) if d in solar else None,
             "weather_hours": w.hours,
             "open_meteo_hours": w.open_meteo_hours,
-            "any_zone_call_min": round(minutes_on_day([(a, b) for _, a, b in todays], d, tz), 1),
+            "any_zone_call_min": round(any_zone, 1),
             "total_zone_call_min": round(sum(per_zone_min.values()), 1),
             "zone_call_count": sum(per_zone_count.values()),
             "per_zone_call_min_json": json.dumps(per_zone_min),
@@ -148,10 +169,16 @@ def _rebuild_daily(cfg: Config, sessions: sessionmaker[Session], days: list[date
             "gal_used_est": gal,
             # Below 1 HDD the ratio is mostly noise.
             "gal_per_hdd": round(gal / w.hdd, 3) if gal is not None and w.hdd and w.hdd >= 1 else None,
+            "runtime_source": source,
         })
     with sessions.begin() as db:
         db.execute(delete(DailySummary).where(DailySummary.date >= days[0], DailySummary.date <= days[-1]))
         db.execute(insert(DailySummary), rows)
+
+
+def hours_in(d: date, tz) -> float:
+    lo, hi = day_bounds(d, tz)
+    return (hi - lo).total_seconds() / 3600
 
 
 class SummariesJob:

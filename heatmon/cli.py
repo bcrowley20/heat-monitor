@@ -1,4 +1,5 @@
-"""Command line: heatmon auth nest | run | serve | collect | backfill | rebuild-summaries | import-deliveries"""
+"""Command line: heatmon auth nest | run | serve | collect | backfill | rebuild-summaries | import-deliveries |
+import-nest-takeout"""
 
 import argparse
 import asyncio
@@ -30,6 +31,8 @@ def main(argv: list[str] | None = None) -> None:
     rb.add_argument("--start", type=date.fromisoformat, help="YYYY-MM-DD (default: all data)")
     imp = sub.add_parser("import-deliveries", help="add propane deliveries from a CSV of invoices")
     imp.add_argument("file", type=Path)
+    tk = sub.add_parser("import-nest-takeout", help="add thermostat history from a Google Takeout zip")
+    tk.add_argument("file", type=Path)
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -65,6 +68,16 @@ def main(argv: list[str] | None = None) -> None:
                 print("Check:", w)
             added, skipped = save_invoices(sessions, rows)
             print(f"Added {added} deliveries" + (f", skipped {skipped} already saved." if skipped else "."))
+        case "import-nest-takeout":
+            from heatmon.processing.summaries import rebuild
+            from heatmon.sources.nest_takeout import import_takeout
+            report = import_takeout(cfg, sessions, args.file)
+            for serial, r in report.items():
+                where = r["zone"] or "no matching zone, skipped"
+                print(f"{serial} ({', '.join(r['names']) or 'no name'}): {where}, "
+                      f"{r['records']} records, {r['added']} new")
+            print("Rebuilding daily summaries...")
+            rebuild(cfg, sessions)
 
 
 def _auth_nest(cfg) -> None:

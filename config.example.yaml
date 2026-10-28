@@ -29,9 +29,13 @@ propane:
 
 # Zones are matched to thermostats by the Nest room name or the thermostat's custom
 # name. If a thermostat doesn't match, the log names it; then set nest_device_id here.
-# loops, area_sqft (square feet) and exposure (N/S/E/W) are optional.
+# loops, area_sqft (square feet) and exposure (N/S/E/W) are optional. A zone that no
+# longer exists stays listed with the day it was retired, so its history still counts.
 zones:
   - name: Hallway
   - name: Great Room
   - name: Master Bedroom
   - name: Guest Bedroom
+  - name: Master Bath
+    retired: 2026-10-27
+    notes: Loop combined into Guest Bedroom; thermostat removed.

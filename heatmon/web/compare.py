@@ -109,7 +109,10 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
             ("Invoice baseline predicts (gallons)", "baseline_gallons", ""),
             ("Difference from invoice baseline", "vs_baseline_pct", "%"),
             (f"Cost per HDD{price_note}", "cost_per_hdd", "$"),
-            ("Calling minutes per HDD", "call_min_per_hdd", ""), ("Calling minutes per HDD, fitted slope", "call_min_per_hdd_fit", ""),
+            ("Zone-minutes per HDD, all zones added up", "zone_min_per_hdd", ""),
+            ("Zone-minutes per HDD, fitted slope", "zone_min_per_hdd_fit", ""),
+            ("Minutes with any zone calling per HDD", "call_min_per_hdd", ""),
+            ("Days of thermostat data from Google Takeout", "estimated_days", ""),
             ("Calls per day, all zones", "calls_per_day", ""), ("Average overshoot", "overshoot_f", "°F"),
         ]
         base_col = {"gal_per_hdd_fit": fmt(round(fit.gal_per_hdd, 3)) if fit else ""}

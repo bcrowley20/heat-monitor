@@ -145,7 +145,9 @@ class NestSource:
         if r.status_code == 401:
             self._token = None  # force a refresh next time
         r.raise_for_status()
+        now = datetime.now(UTC).replace(microsecond=0)
+        retired = {z.name for z in self.cfg.zones if z.retired and z.retired <= now.date()}
         with self.sessions() as db:
-            zones = list(db.scalars(select(Zone)))
-        rows = parse_devices(r.json(), datetime.now(UTC).replace(microsecond=0), zones)
+            zones = [z for z in db.scalars(select(Zone)) if z.name not in retired]
+        rows = parse_devices(r.json(), now, zones)
         return insert_ignore(self.sessions, ThermostatReading, rows)

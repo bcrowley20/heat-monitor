@@ -1,5 +1,6 @@
 """Settings: secrets come from .env, everything else from config.yaml."""
 
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -29,6 +30,9 @@ class Zone(BaseModel):
     area_sqft: float | None = None
     exposure: str | None = None
     notes: str | None = None
+    # The day a zone stopped existing. Live readings after it are not counted for the zone;
+    # older history still is.
+    retired: date | None = None
 
 
 class Intervals(BaseModel):

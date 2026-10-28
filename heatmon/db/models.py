@@ -139,6 +139,9 @@ class DailySummary(Base):
     per_zone_call_count_json: Mapped[str] = mapped_column(Text)
     gal_used_est: Mapped[float | None]
     gal_per_hdd: Mapped[float | None]
+    # Where the zone figures came from: 'live' polling, 'history' (Google Takeout's
+    # 15-minute records), or None when there is no thermostat data for the day.
+    runtime_source: Mapped[str | None]
 
 
 class Event(Base):
@@ -160,3 +163,17 @@ class BoilerSettingsSnapshot(Base):
     effective_from: Mapped[datetime | None]  # None: in place since before records began
     label: Mapped[str]
     params_json: Mapped[str] = mapped_column(Text)
+
+
+class ThermostatHistory(Base):
+    """15-minute records from a Google Takeout export of Nest data."""
+
+    __tablename__ = "thermostat_history"
+    device_id: Mapped[str] = mapped_column(primary_key=True)  # the thermostat's serial number
+    interval_start: Mapped[datetime] = mapped_column(primary_key=True)
+    zone_id: Mapped[int | None] = mapped_column(ForeignKey("zones.id"))
+    heating_s: Mapped[int]  # seconds of the 15 minutes spent calling for heat
+    indoor_c: Mapped[float | None]
+    setpoint_c: Mapped[float | None]
+    humidity_pct: Mapped[float | None]
+    __table_args__ = (Index("ix_thermostat_history_zone_start", "zone_id", "interval_start"),)
