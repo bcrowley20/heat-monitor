@@ -150,3 +150,13 @@ class Event(Base):
     type: Mapped[str]  # setting_change, delivery, service, fireplace, away, note
     title: Mapped[str]
     details: Mapped[str | None] = mapped_column(Text)
+
+
+class BoilerSettingsSnapshot(Base):
+    """A dated record of the boiler's settings."""
+
+    __tablename__ = "boiler_settings_snapshots"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    effective_from: Mapped[datetime | None]  # None: in place since before records began
+    label: Mapped[str]
+    params_json: Mapped[str] = mapped_column(Text)

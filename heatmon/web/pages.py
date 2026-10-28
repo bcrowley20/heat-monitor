@@ -66,7 +66,8 @@ def _fit_scatter(groups: dict[str, list[dict]], unit: str) -> tuple[list[dict], 
                        "marker": {"color": colors[label], "size": 10, "line": {"color": "white", "width": 2}}})
         fit = data.fit_line(xs, ys)
         if fit is None:
-            notes.append(f"{label}: {len(pts)} points from {days} days, not enough for a fitted line.")
+            notes.append(f"{label}: {len(pts)} point{'s' if len(pts) != 1 else ''} from {days} days, "
+                         "not enough for a fitted line.")
             continue
         lo, hi = min(xs), max(xs)
         traces.append({"type": "scatter", "mode": "lines", "name": f"{label} fit", "showlegend": False,
@@ -263,6 +264,23 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
         ui.label("Daily gallons are rough: the tank reports in whole percents. Weekly totals are more reliable.") \
             .classes("text-sm text-gray-500")
         table("By week", weeks, "weekly_propane", c.start, c.end)
+
+        ib = data.invoice_baseline(c)
+        fit = ib.fit
+        with ui.card().classes(CARD + " w-full"):
+            ui.label("Invoice baseline: before the monitor").classes("text-sm font-semibold")
+            if fit:
+                ui.label(f"From {fit.intervals} delivery intervals, {fit.start:%b %Y} to {fit.end:%b %Y}: heating used "
+                         f"{fit.gal_per_hdd:.3f} gallons per degree day, plus {fit.base_gal_per_day:.2f} gallons a day "
+                         f"for hot water, cooking and the fireplace (R² {fit.r2:.2f}).").classes("text-sm")
+            else:
+                ui.label("Appears once at least four invoiced deliveries are imported (on the Events & settings "
+                         "page) and the weather backfill covers their dates.").classes("text-sm text-gray-500")
+        if fit:
+            table("Invoice usage by heating season (October to April), spread over days by the fitted line",
+                  data.baseline_seasons(c, ib), "baseline_seasons", rows_per_page=0)
+            table("Usage between invoiced deliveries", data.delivery_intervals(c, ib), "delivery_intervals",
+                  rows_per_page=0)
         table("Fills", fills, "deliveries", c.start, c.end, 5)
         table("Tank readings", readings, "tank", c.start, c.end)
 

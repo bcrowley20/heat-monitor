@@ -46,6 +46,8 @@ class Propane(BaseModel):
     # Rough starting estimates, used only to spread usage between tank readings across days.
     base_gal_per_day: float = 1.0
     gal_per_hdd: float = 0.15
+    # Price used to value usage. Leave unset to use the most recent invoice's price.
+    price_per_gal: float | None = None
 
 
 class Config(BaseModel):

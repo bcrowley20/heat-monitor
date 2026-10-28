@@ -127,3 +127,16 @@ def test_date_range_caps_future_and_ignores_bad_input(cfg):
     assert date_range(cfg, "2026-10-01", "9999-12-31") == (date(2026, 10, 1), today)
     assert date_range(cfg, "junk", None) == (today - timedelta(days=13), today)
     assert date_range(cfg, "2026-10-10", "2026-10-01") == (date(2026, 10, 1), date(2026, 10, 10))
+
+
+def test_compare_summary_and_confidence():
+    a = {"mean_temp_f": 40.0, "hdd": 250.0, "gal_per_hdd": 0.2, "vs_baseline_pct": None, "gallons": 50.0,
+         "baseline_gallons": None, "call_min_per_hdd": 20.0, "days_with_propane": 10, "days": 30,
+         "days_with_thermostats": 30, "hdd_range": 5}
+    b = {**a, "mean_temp_f": 35.0, "hdd": 300.0, "gal_per_hdd": 0.17, "vs_baseline_pct": -12.0,
+         "gallons": 51.0, "baseline_gallons": 58.0, "call_min_per_hdd": 22.0}
+    text = " ".join(data.compare_summary(a, b, "Before", "After"))
+    assert "Propane per degree day was 15% lower in After" in text
+    assert "After was 12% below it" in text and "Calling time per degree day was 10% higher" in text
+    assert text.count("Low confidence") == 1 and "for propane, one period has only 10 days" in text
+    assert "calling time, one" not in text and "barely varied" in text  # 30 thermostat days is enough

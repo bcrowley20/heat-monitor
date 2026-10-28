@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from heatmon.config import Config
 from heatmon.db.models import (DailySummary, Event, PropaneDelivery, SourceStatus, TankReading,
                                ThermostatReading, WeatherObs, Zone, ZoneCall)
+from heatmon.processing import baseline
 from heatmon.processing.days import day_bounds, local_date
 from heatmon.processing.degree_days import HOUR, hourly_temps
 
@@ -200,12 +201,6 @@ def events(c: Ctx) -> list[dict]:
     return [{"time": c.local(e.ts), "type": e.type, "title": e.title, "details": e.details} for e in rows]
 
 
-DATASETS = {
-    "daily": daily, "thermostat": thermostat, "zone_calls": zone_calls, "weather_hourly": weather_hourly,
-    "tank": tank, "deliveries": deliveries, "weekly_propane": weekly_propane, "events": events,
-}
-
-
 # ---------- settings periods and fitting ----------
 
 @dataclass
@@ -298,3 +293,161 @@ def freshness(c: Ctx) -> list[dict]:
         failing = r.last_error_ts is not None and (r.last_success_ts is None or r.last_error_ts > r.last_success_ts)
         out.append({"source": r.source, "minutes_ago": None if ago is None else round(ago), "failing": failing})
     return out
+
+
+# ---------- invoice baseline and period comparison ----------
+
+def hdd_by_day(c: Ctx) -> dict[date, float]:
+    with c.sessions() as db:
+        return dict(db.execute(select(DailySummary.date, DailySummary.hdd).where(DailySummary.hdd.is_not(None))).all())
+
+
+def price_per_gal(c: Ctx) -> float | None:
+    if c.cfg.propane.price_per_gal is not None:
+        return c.cfg.propane.price_per_gal
+    with c.sessions() as db:
+        return db.scalar(select(PropaneDelivery.price_per_gal)
+                         .where(PropaneDelivery.source == "invoice", PropaneDelivery.price_per_gal.is_not(None))
+                         .order_by(PropaneDelivery.date.desc()).limit(1))
+
+
+@dataclass
+class InvoiceBaseline:
+    intervals: list[baseline.DeliveryInterval]
+    fit: baseline.Baseline | None
+    hdd: dict[date, float]
+
+
+def invoice_baseline(c: Ctx) -> InvoiceBaseline:
+    """Intervals between invoiced deliveries and the line fitted through them."""
+    with c.sessions() as db:
+        invoices = [baseline.Delivery(r.date, r.gallons, r.price_per_gal, r.tank_pct_before, r.tank_pct_after)
+                    for r in db.scalars(select(PropaneDelivery).where(PropaneDelivery.source == "invoice"))]
+    hdd = hdd_by_day(c)
+    intervals = baseline.delivery_intervals(invoices, hdd, c.cfg.propane.tank_size_gal)
+    return InvoiceBaseline(intervals, baseline.fit_baseline(intervals), hdd)
+
+
+def excluded_days(c: Ctx, types: tuple[str, ...] = ("fireplace", "away")) -> set[date]:
+    with c.sessions() as db:
+        return {local_date(ts, c.tz) for ts in db.scalars(select(Event.ts).where(Event.type.in_(types)))}
+
+
+def first_thermostat_day(c: Ctx) -> date | None:
+    with c.sessions() as db:
+        first = db.scalar(select(func.min(ThermostatReading.ts)))
+    return local_date(first, c.tz) if first else None
+
+
+def period_stats(c: Ctx, exclude: set[date], fit: baseline.Baseline | None, price: float | None) -> dict:
+    """Totals and rates for one comparison period. Days in `exclude` are left out."""
+    first_t = first_thermostat_day(c)
+    days = [d for d in daily(c) if date.fromisoformat(d["date"]) not in exclude and d["hdd"] is not None]
+    gal_days = [d for d in days if d["gal_used_est"] is not None]
+    # Days before the thermostats were connected have no runtime, not zero runtime.
+    t_days = [d for d in days if first_t and date.fromisoformat(d["date"]) > first_t]
+    gallons, gal_hdd = sum(d["gal_used_est"] for d in gal_days), sum(d["hdd"] for d in gal_days)
+    t_hdd, call_min = sum(d["hdd"] for d in t_days), sum(d["any_zone_call_min"] for d in t_days)
+    bins = [gal_days[i:i + 7] for i in range(0, len(gal_days), 7)]
+    bins = [b for b in bins if len(b) >= 4]
+    gal_fit = fit_line([mean(d["hdd"] for d in b) for b in bins], [mean(d["gal_used_est"] for d in b) for b in bins])
+    call_fit = fit_line([d["hdd"] for d in t_days], [d["any_zone_call_min"] for d in t_days])
+    predicted = fit.predict(len(gal_days), gal_hdd) if fit and gal_days else None
+    t_dates = {d["date"] for d in t_days}
+    overs = [k["overshoot_f"] for k in zone_calls(c) if k["overshoot_f"] is not None and k["start"][:10] in t_dates]
+    ratio = gallons / gal_hdd if gal_hdd >= 10 else None
+    return {
+        "days": len(days), "days_with_propane": len(gal_days), "days_with_thermostats": len(t_days),
+        "mean_temp_f": _r(mean(d["mean_temp_f"] for d in days)) if days else None,
+        "hdd": _r(sum(d["hdd"] for d in days)),
+        "hdd_range": _r(max(d["hdd"] for d in days) - min(d["hdd"] for d in days)) if days else None,
+        "gallons": _r(gallons) if gal_days else None,
+        "gal_per_hdd": _r(ratio, 3),
+        "gal_per_hdd_fit": _r(gal_fit.slope, 3) if gal_fit else None,
+        "baseline_gallons": _r(predicted),
+        "vs_baseline_pct": _r((gallons - predicted) / predicted * 100) if predicted else None,
+        "cost_per_hdd": _r(ratio * price, 2) if ratio is not None and price else None,
+        "call_min_per_hdd": _r(call_min / t_hdd) if t_hdd >= 10 else None,
+        "call_min_per_hdd_fit": _r(call_fit.slope) if call_fit and len(t_days) >= 5 else None,
+        "calls_per_day": _r(mean(d["zone_calls"] for d in t_days)) if t_days else None,
+        "overshoot_f": _r(mean(overs)) if overs else None,
+    }
+
+
+def _pct(new: float, old: float) -> str:
+    change = (new - old) / old * 100
+    return f"{abs(change):.0f}% {'lower' if change < 0 else 'higher'}"
+
+
+def compare_summary(a: dict, b: dict, a_name: str, b_name: str) -> list[str]:
+    """Plain sentences comparing period B against period A, ending with a confidence note."""
+    out = []
+    if a["mean_temp_f"] is not None and b["mean_temp_f"] is not None:
+        out.append(f"{b_name} averaged {b['mean_temp_f']}°F outside with {b['hdd']} degree days; "
+                   f"{a_name} averaged {a['mean_temp_f']}°F with {a['hdd']}.")
+    if a["gal_per_hdd"] and b["gal_per_hdd"]:
+        out.append(f"Propane per degree day was {_pct(b['gal_per_hdd'], a['gal_per_hdd'])} in {b_name} "
+                   f"({b['gal_per_hdd']} against {a['gal_per_hdd']} gal/HDD).")
+    for name, p in ((a_name, a), (b_name, b)):
+        if p["vs_baseline_pct"] is not None:
+            out.append(f"{name} used {p['gallons']} gallons. The invoice baseline predicts {p['baseline_gallons']} "
+                       f"for the same days and weather, so {name} was {abs(p['vs_baseline_pct']):.0f}% "
+                       f"{'below' if p['vs_baseline_pct'] < 0 else 'above'} it.")
+    if a["call_min_per_hdd"] and b["call_min_per_hdd"]:
+        out.append(f"Calling time per degree day was {_pct(b['call_min_per_hdd'], a['call_min_per_hdd'])} in "
+                   f"{b_name} ({b['call_min_per_hdd']} against {a['call_min_per_hdd']} minutes).")
+    if not out:
+        out.append("There isn't enough data in these periods to compare yet.")
+
+    # Rate each measure on the days that actually have that kind of data.
+    coverage = {}
+    if a["gal_per_hdd"] and b["gal_per_hdd"]:
+        coverage["propane"] = min(a["days_with_propane"], b["days_with_propane"])
+    if a["call_min_per_hdd"] and b["call_min_per_hdd"]:
+        coverage["calling time"] = min(a["days_with_thermostats"], b["days_with_thermostats"])
+    if not coverage:
+        coverage["weather"] = min(a["days"], b["days"])
+    shortest = min(coverage.values())
+    notes = [f"for {measure}, one period has only {n} days of data, and at least 14 are needed"
+             for measure, n in coverage.items() if n < 14]
+    for name, p in ((a_name, a), (b_name, b)):
+        if p["gallons"] is not None and p["gallons"] < 100:
+            notes.append(f"{name} used only {p['gallons']:.0f} gallons, and the tank reads in 10-gallon "
+                         f"steps, so that total could be off by about {1000 / max(p['gallons'], 1):.0f}%")
+    if all(p["hdd_range"] is not None and p["hdd_range"] < 10 for p in (a, b)):
+        notes.append("the weather barely varied, so the fitted slopes are unreliable")
+    if notes:
+        out.append("Low confidence: " + "; ".join(notes) + ".")
+    elif shortest < 28:
+        out.append("Moderate confidence: both periods have 2 to 4 weeks of data.")
+    else:
+        out.append("Reasonable confidence: both periods have 4 or more weeks of data.")
+    return out
+
+
+def delivery_intervals(c: Ctx, ib: InvoiceBaseline | None = None) -> list[dict]:
+    """Usage between invoiced deliveries (all of them; the range is ignored)."""
+    intervals = (ib or invoice_baseline(c)).intervals
+    rates = sorted(iv.gallons / iv.days for iv in intervals if iv.days)
+    typical = rates[len(rates) // 2] if rates else None
+    return [{"from": iv.start.isoformat(), "to": iv.end.isoformat(), "days": iv.days, "gallons_used": iv.gallons,
+             "hdd": iv.hdd, "gal_per_day": round(iv.gallons / iv.days, 2) if iv.days else None,
+             "gal_per_hdd": round(iv.gallons / iv.hdd, 3) if iv.hdd else None,
+             "price_per_gal": iv.price_per_gal, "worked_out_from": iv.method,
+             # Three times the typical daily rate usually means a wrong date or a copied row.
+             "check": "unusually high, check these invoices"
+             if typical and iv.days and iv.gallons / iv.days > 3 * typical else ""}
+            for iv in intervals]
+
+
+def baseline_seasons(c: Ctx, ib: InvoiceBaseline | None = None) -> list[dict]:
+    """Invoice usage spread over heating seasons (all of them; the range is ignored)."""
+    ib = ib or invoice_baseline(c)
+    return baseline.by_season(ib.intervals, ib.hdd, ib.fit, price_per_gal(c)) if ib.fit else []
+
+
+DATASETS = {
+    "daily": daily, "thermostat": thermostat, "zone_calls": zone_calls, "weather_hourly": weather_hourly,
+    "tank": tank, "deliveries": deliveries, "weekly_propane": weekly_propane, "events": events,
+    "delivery_intervals": delivery_intervals, "baseline_seasons": baseline_seasons,
+}

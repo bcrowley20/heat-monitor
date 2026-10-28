@@ -65,13 +65,29 @@ For debugging, `heatmon collect` only collects and `heatmon serve` only serves p
 
 **Overview** shows current conditions, today against yesterday, and propane per degree day by week. **Zones** has one chart per zone: room temperature and setpoint on top, with shading while the zone calls for heat, and outdoor temperature in a panel below. Its table lists every call with its overshoot, which is the highest the room rose above its setpoint in the 6 hours after the call ended. **Runtime** shows minutes calling per day and per zone, and how calling time tracks degree days. **Propane** shows tank readings, fills, weekly usage, and how usage tracks degree days. **Weather** shows temperature, sunshine and wind. **Status** shows each data source's health.
 
-Every page except Overview and Status has a date range picker at the top. The default is the last 14 days. Grey lines with a small marker show events, such as setting changes. Hover over the marker to read the event.
+Zones, Runtime, Propane and Weather have a date range picker at the top. The default is the last 14 days. Grey lines with a small marker show events, such as setting changes. Hover over the marker to read the event.
 
 The scatter charts split days into settings periods. Each setting change starts a new period, and changes on the same day count as one. The day of a change belongs to the period before it. Propane is plotted as 7-day averages, because the tank reports in whole percents and single days are too coarse.
 
+**Compare** puts two periods side by side. Pick "before and after an event" to compare the days before a setting change with the days after it; the day of the change is left out of both. Or pick any two date ranges. It shows propane and calling time per degree day for each period, how each period did against the invoice baseline, and a short written summary that ends with how much to trust the result. Days with a fireplace or away event are left out unless you tick the box to include them.
+
+**Events & settings** is where you add, edit and delete events, keep dated snapshots of the boiler's settings (and see what changed between two of them), and import propane invoices.
+
+## Propane invoices and the baseline
+
+Import invoices from a CSV on the Events & settings page, or from the command line:
+
+```sh
+uv run heatmon import-deliveries deliveries.csv
+```
+
+The columns are in `deliveries_template.csv`. Dates can be `2025-10-30` or `10/30/25`, and values like `$1,467.02` or `79%` are fine. Blank rows are skipped. A file with a bad line is not saved at all, and the error names the line. Rows that look like slips, such as two deliveries with the same gallons and cost, or two less than a week apart, get a warning but still save. Importing the same file again skips rows already saved. When the tank monitor detects a fill within 3 days of an invoiced delivery, only the invoice counts.
+
+The invoices give a baseline from before the monitor existed. Usage between two deliveries is the later delivery's gallons, corrected when the two fills ended at different tank levels. The app then fits gallons used = base load × days + gallons per degree day × degree days across all delivery periods. The base load covers hot water, cooking and the fireplace. The baseline needs weather history covering the invoices, so run the backfill from the first invoice date. The Propane page shows the baseline, totals by heating season, and the usage between each pair of deliveries. Any period with an unusually high daily rate is flagged, because that usually means a wrong date or a copied row.
+
 ## Data API
 
-Every table has a "Download CSV" link. The same data is available as JSON at `/api/<name>?start=YYYY-MM-DD&end=YYYY-MM-DD`, or as CSV at `/api/<name>.csv`. The names are `daily`, `thermostat`, `zone_calls`, `weather_hourly`, `tank`, `deliveries`, `weekly_propane` and `events`.
+Every table has a "Download CSV" link. The same data is available as JSON at `/api/<name>?start=YYYY-MM-DD&end=YYYY-MM-DD`, or as CSV at `/api/<name>.csv`. The names are `daily`, `thermostat`, `zone_calls`, `weather_hourly`, `tank`, `deliveries`, `weekly_propane`, `events`, `delivery_intervals` and `baseline_seasons`.
 
 ## Calculations
 

@@ -1,4 +1,4 @@
-"""Command line: heatmon auth nest | run | serve | collect | backfill | rebuild-summaries"""
+"""Command line: heatmon auth nest | run | serve | collect | backfill | rebuild-summaries | import-deliveries"""
 
 import argparse
 import asyncio
@@ -28,6 +28,8 @@ def main(argv: list[str] | None = None) -> None:
     bf.add_argument("--end", type=date.fromisoformat, help="YYYY-MM-DD (default: yesterday)")
     rb = sub.add_parser("rebuild-summaries", help="recalculate zone calls, fills and daily summaries")
     rb.add_argument("--start", type=date.fromisoformat, help="YYYY-MM-DD (default: all data)")
+    imp = sub.add_parser("import-deliveries", help="add propane deliveries from a CSV of invoices")
+    imp.add_argument("file", type=Path)
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -54,6 +56,15 @@ def main(argv: list[str] | None = None) -> None:
         case "rebuild-summaries":
             from heatmon.processing.summaries import rebuild
             log.info("Rebuilt %d days", rebuild(cfg, sessions, args.start))
+        case "import-deliveries":
+            from heatmon.records import delivery_warnings, parse_deliveries_csv, save_invoices
+            rows, problems = parse_deliveries_csv(args.file.read_text())
+            if problems:
+                raise SystemExit("Nothing saved. Fix these lines and try again:\n" + "\n".join(problems))
+            for w in delivery_warnings(rows):
+                print("Check:", w)
+            added, skipped = save_invoices(sessions, rows)
+            print(f"Added {added} deliveries" + (f", skipped {skipped} already saved." if skipped else "."))
 
 
 def _auth_nest(cfg) -> None:

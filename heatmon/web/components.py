@@ -9,7 +9,8 @@ from nicegui import ui
 from heatmon.config import Config
 
 PAGES = [("/", "Overview"), ("/zones", "Zones"), ("/runtime", "Runtime"), ("/propane", "Propane"),
-         ("/weather", "Weather"), ("/status", "Status")]
+         ("/weather", "Weather"), ("/compare", "Compare"), ("/events", "Events & settings"), ("/status", "Status")]
+RANGELESS = {"/compare", "/events", "/status"}  # pages that don't use the shared date range
 DEFAULT_DAYS = 14
 
 # Validated reference palette (light mode). Categorical slots are used in this order.
@@ -43,7 +44,7 @@ def frame(cfg: Config, path: str, start: date | None = None, end: date | None = 
     with ui.row().classes("w-full items-center gap-4 pb-2 border-b"):
         ui.label("Heating Monitor").classes("text-lg font-semibold mr-4")
         for href, name in PAGES:
-            link = ui.link(name, href + (q if href != "/status" else "")).classes("no-underline")
+            link = ui.link(name, href + ("" if href in RANGELESS else q)).classes("no-underline")
             link.classes("font-semibold text-black" if href == path else "text-gray-600")
     if start is None:
         return

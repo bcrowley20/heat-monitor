@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
 from heatmon.scheduler import build_sources, run_all
-from heatmon.web import api, pages, status
+from heatmon.web import api, compare, manage, pages, status
 
 
 def create_app(cfg: Config, sessions: sessionmaker[Session], collect: bool) -> FastAPI:
@@ -18,6 +18,8 @@ def create_app(cfg: Config, sessions: sessionmaker[Session], collect: bool) -> F
 
     app.include_router(api.router(cfg, sessions))
     pages.register(cfg, sessions)
+    compare.register(cfg, sessions)
+    manage.register(cfg, sessions)
     status.register(cfg, sessions, {s.name for s in sources})
 
     if sources:

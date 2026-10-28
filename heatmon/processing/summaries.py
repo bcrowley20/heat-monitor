@@ -21,6 +21,8 @@ from heatmon.processing.zone_calls import Sample, derive_calls, minutes_on_day
 # before the window keep their true start time.
 LOOKBACK = timedelta(days=2)
 RECENT_DAYS = 2
+# A detected fill this close to an invoiced delivery is the same delivery.
+INVOICE_MATCH_DAYS = 3
 
 
 def rebuild(cfg: Config, sessions: sessionmaker[Session], start: date | None = None) -> int:
@@ -77,10 +79,15 @@ def _rebuild_detected_deliveries(cfg: Config, sessions: sessionmaker[Session], t
             .order_by(TankReading.ts))]
         intervals = tank_intervals(readings, cfg.propane)
         db.execute(delete(PropaneDelivery).where(PropaneDelivery.source == "detected"))
+        invoices = db.scalars(select(PropaneDelivery.date).where(PropaneDelivery.source == "invoice")).all()
+
+        def has_invoice(day: date) -> bool:  # the invoice is the better record of a fill
+            return any(abs((day - d).days) <= INVOICE_MATCH_DAYS for d in invoices)
+
         db.add_all(PropaneDelivery(date=local_date(iv.end, tz), gallons=round(iv.gallons, 1),
                                    tank_pct_before=iv.level_before, tank_pct_after=iv.level_after,
                                    source="detected")
-                   for iv in intervals if iv.kind == "delivery")
+                   for iv in intervals if iv.kind == "delivery" and not has_invoice(local_date(iv.end, tz)))
     return intervals
 
 
