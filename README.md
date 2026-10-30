@@ -99,6 +99,14 @@ Days before live polling started use these records. Minutes calling per zone are
 
 A zone that no longer exists stays in `config.yaml` with the day it was retired, like Master Bath. Its history still counts up to that day.
 
+## Alerts
+
+The gear button at the top right of every page opens the settings. There are three alerts, and each one can be turned off or given its own limits. The propane alert fires when the tank drops below a set percentage. The data source alert fires when a source such as Nest or the weather station has sent nothing for a set number of hours. The room alert fires when a room stays more than a set number of degrees below its setpoint for a set number of hours. Rooms in Eco mode or with heat off are left alone.
+
+The app checks every 5 minutes. You get one message when an alert starts and one when it clears, never repeats in between. A tank alert clears only once the level is 2 points above the limit, so small swings near the limit stay quiet. A source that has never worked since the app started also counts as sending nothing. Turning an alert off closes any open one without a message. Messages go to your phone through Pushover. If a message can't get through, for example while the internet is down, it is sent on a later check. In Pushover, create an application to get an application token, then paste it and your user key into the settings. "Send test" checks that they work. Open pages also show a popup, and a red count on the gear shows how many alerts are open.
+
+The Pushover token is stored in the database, and the settings page has no login. Anyone on your home network can open it.
+
 ## Data API
 
 Every table has a "Download CSV" link. The same data is available as JSON at `/api/<name>?start=YYYY-MM-DD&end=YYYY-MM-DD`, or as CSV at `/api/<name>.csv`. The names are `daily`, `thermostat`, `zone_calls`, `weather_hourly`, `tank`, `deliveries`, `weekly_propane`, `events`, `delivery_intervals` and `baseline_seasons`.

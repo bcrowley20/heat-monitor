@@ -85,7 +85,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
 
     @ui.page("/", title="Overview · Heating Monitor")
     def overview():
-        frame(cfg, "/")
+        frame(cfg, sessions, "/")
 
         @ui.refreshable
         def body():
@@ -156,7 +156,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
     @ui.page("/zones", title="Zones · Heating Monitor")
     def zones(start: str | None = None, end: str | None = None):
         c = ctx(start, end)
-        frame(cfg, "/zones", c.start, c.end)
+        frame(cfg, sessions, "/zones", c.start, c.end)
         readings, calls, events = data.thermostat(c), data.zone_calls(c), data.events(c)
         history = data.history_heating(c)
         hours_wx = data.weather_hourly(c)
@@ -211,7 +211,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
     @ui.page("/runtime", title="Runtime · Heating Monitor")
     def runtime(start: str | None = None, end: str | None = None):
         c = ctx(start, end)
-        frame(cfg, "/runtime", c.start, c.end)
+        frame(cfg, sessions, "/runtime", c.start, c.end)
         days, events, names = data.daily(c), data.events(c), data.zone_names(c)
         x = [d["date"] for d in days]
         bars = [{"type": "bar", "name": z, "x": x, "y": [d[f"{z} min"] for d in days],
@@ -246,7 +246,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
     @ui.page("/propane", title="Propane · Heating Monitor")
     def propane(start: str | None = None, end: str | None = None):
         c = ctx(start, end)
-        frame(cfg, "/propane", c.start, c.end)
+        frame(cfg, sessions, "/propane", c.start, c.end)
         readings, fills, events = data.tank(c), data.deliveries(c), data.events(c)
         traces = [{"type": "scatter", "mode": "lines+markers", "name": "Tank level",
                    "x": [r["time"] for r in readings], "y": [r["level_pct"] for r in readings],
@@ -306,7 +306,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
     @ui.page("/weather", title="Weather · Heating Monitor")
     def weather(start: str | None = None, end: str | None = None):
         c = ctx(start, end)
-        frame(cfg, "/weather", c.start, c.end)
+        frame(cfg, sessions, "/weather", c.start, c.end)
         hours, events = data.weather_hourly(c), data.events(c)
         x = [h["time"] for h in hours]
         filled = [h for h in hours if h["temp_source"] == "open-meteo"]

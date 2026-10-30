@@ -44,7 +44,7 @@ def test_next_delay():
 
 def test_build_sources_skips_missing_credentials(cfg, sessions):
     cfg.secrets = Secrets(_env_file=None, wu_api_key="k")
-    assert [s.name for s in build_sources(cfg, sessions)] == ["wunderground", "open-meteo", "summaries"]
+    assert [s.name for s in build_sources(cfg, sessions)] == ["wunderground", "open-meteo", "summaries", "alerts"]
 
 
 def test_log_output_masks_secrets(tmp_path, capsys, monkeypatch):

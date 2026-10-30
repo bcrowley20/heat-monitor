@@ -177,3 +177,26 @@ class ThermostatHistory(Base):
     setpoint_c: Mapped[float | None]
     humidity_pct: Mapped[float | None]
     __table_args__ = (Index("ix_thermostat_history_zone_start", "zone_id", "interval_start"),)
+
+
+class AppSetting(Base):
+    """Settings edited in the app, stored as JSON by name."""
+
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(primary_key=True)
+    value_json: Mapped[str] = mapped_column(Text)
+
+
+class Alert(Base):
+    """A condition that needed attention. Open until cleared_ts is set."""
+
+    __tablename__ = "alerts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str]  # tank_low, source_stale, room_cold
+    subject: Mapped[str]  # what it is about: 'tank', a source name or a zone name
+    message: Mapped[str] = mapped_column(Text)
+    started_ts: Mapped[datetime]
+    cleared_ts: Mapped[datetime | None]
+    # Whether Pushover has the start and clear messages. Unsent ones are retried.
+    start_sent: Mapped[bool] = mapped_column(default=False)
+    clear_sent: Mapped[bool] = mapped_column(default=False)

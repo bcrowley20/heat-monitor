@@ -17,6 +17,7 @@ intervals:
   tank_s: 7200
   open_meteo_s: 3600      # solar estimates and temperature gap filling
   summaries_s: 3600       # rebuild zone calls and daily summaries
+  alerts_s: 300           # check alert conditions
 
 propane:
   tank_size_gal: 1000

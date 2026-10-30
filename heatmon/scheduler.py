@@ -5,6 +5,7 @@ import logging
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from heatmon.alerts import AlertsJob
 from heatmon.config import Config
 from heatmon.db.session import record_status
 from heatmon.logs import scrub
@@ -35,7 +36,9 @@ def build_sources(cfg: Config, sessions: sessionmaker[Session]) -> list[Source]:
             sources.append(cls(cfg, sessions))
         else:
             log.warning("%s: credentials missing from .env; not collecting", cls.name)
-    return sources + [OpenMeteoSource(cfg, sessions), SummariesJob(cfg, sessions)]
+    sources.append(OpenMeteoSource(cfg, sessions))
+    alerts = AlertsJob(cfg, sessions, {s.name for s in sources})  # data sources only, not jobs
+    return sources + [SummariesJob(cfg, sessions), alerts]
 
 
 def next_delay(interval_s: int, failures: int) -> int:

@@ -38,7 +38,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
 
     @ui.page("/events", title="Events & settings · Heating Monitor")
     def page():
-        frame(cfg, "/events")
+        frame(cfg, sessions, "/events")
 
         # ---------- events ----------
         with ui.card().classes(CARD + " w-full"):

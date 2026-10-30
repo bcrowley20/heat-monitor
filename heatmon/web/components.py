@@ -5,8 +5,10 @@ from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from nicegui import ui
+from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
+from heatmon.web.alerts import settings_button
 
 PAGES = [("/", "Overview"), ("/zones", "Zones"), ("/runtime", "Runtime"), ("/propane", "Propane"),
          ("/weather", "Weather"), ("/compare", "Compare"), ("/events", "Events & settings"), ("/status", "Status")]
@@ -38,8 +40,9 @@ def _query(start: date, end: date) -> str:
     return "?" + urlencode({"start": start.isoformat(), "end": end.isoformat()})
 
 
-def frame(cfg: Config, path: str, start: date | None = None, end: date | None = None) -> None:
-    """Page header with navigation and, when a range is given, the range picker."""
+def frame(cfg: Config, sessions: sessionmaker[Session], path: str, start: date | None = None,
+          end: date | None = None) -> None:
+    """Page header with navigation, the settings button and, when a range is given, the range picker."""
     ui.query("body").style(f"background:{PAGE_BG}; font-family:{FONT}")
     q = _query(start, end) if start else ""
     with ui.row().classes("w-full items-center gap-4 pb-2 border-b"):
@@ -47,6 +50,7 @@ def frame(cfg: Config, path: str, start: date | None = None, end: date | None = 
         for href, name in PAGES:
             link = ui.link(name, href + ("" if href in RANGELESS else q)).classes("no-underline")
             link.classes("font-semibold text-black" if href == path else "text-gray-600")
+        settings_button(cfg, sessions)
     if start is None:
         return
 

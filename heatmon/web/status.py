@@ -14,7 +14,7 @@ from heatmon.db.models import (DailySummary, PropaneDelivery, SourceStatus, Tank
                                ThermostatReading, WeatherObs, Zone, ZoneCall)
 
 SOURCES = {"nest": "nest_s", "wunderground": "weather_s", "centriconnect": "tank_s",
-           "open-meteo": "open_meteo_s", "summaries": "summaries_s"}
+           "open-meteo": "open_meteo_s", "summaries": "summaries_s", "alerts": "alerts_s"}
 
 
 def status_data(cfg: Config, sessions: sessionmaker[Session], active: set[str]) -> dict:
@@ -100,6 +100,6 @@ def register(cfg: Config, sessions: sessionmaker[Session], active: set[str]) -> 
             _table("Propane tank (latest)", d["tank"])
             _table(f"Stored rows (database {d['db_size_mb']} MB)", d["counts"])
 
-        frame(cfg, "/status")
+        frame(cfg, sessions, "/status")
         content()
         ui.timer(30, content.refresh)

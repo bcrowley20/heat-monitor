@@ -30,7 +30,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
     @ui.page("/compare", title="Compare · Heating Monitor")
     def page(event: str | None = None, days: int = DEFAULT_DAYS, a1: str | None = None, a2: str | None = None,
              b1: str | None = None, b2: str | None = None, keep: int = 0):
-        frame(cfg, "/compare")
+        frame(cfg, sessions, "/compare")
         today = datetime.now(tz).date()
         with sessions() as db:
             evs = db.scalars(select(Event).where(Event.type.in_(("setting_change", "service")))

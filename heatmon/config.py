@@ -41,6 +41,7 @@ class Intervals(BaseModel):
     tank_s: int = 7200
     open_meteo_s: int = 3600
     summaries_s: int = 3600
+    alerts_s: int = 300
 
 
 class Propane(BaseModel):
