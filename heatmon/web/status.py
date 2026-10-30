@@ -8,13 +8,15 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
+from heatmon.sources.pumps import load_settings as load_pump_settings
 from heatmon.web.components import frame
 from heatmon.web.data import c_to_f
-from heatmon.db.models import (DailySummary, PropaneDelivery, SourceStatus, TankReading,
+from heatmon.db.models import (DailySummary, PropaneDelivery, PumpEvent, SourceStatus, TankReading,
                                ThermostatReading, WeatherObs, Zone, ZoneCall)
 
 SOURCES = {"nest": "nest_s", "wunderground": "weather_s", "centriconnect": "tank_s",
-           "open-meteo": "open_meteo_s", "summaries": "summaries_s", "alerts": "alerts_s"}
+           "open-meteo": "open_meteo_s", "summaries": "summaries_s", "alerts": "alerts_s",
+           "pumps": "pumps_s"}
 
 
 def status_data(cfg: Config, sessions: sessionmaker[Session], active: set[str]) -> dict:
@@ -23,6 +25,7 @@ def status_data(cfg: Config, sessions: sessionmaker[Session], active: set[str]) 
     def local(ts: datetime | None) -> str:
         return ts.astimezone(tz).strftime("%Y-%m-%d %H:%M") if ts else ""
 
+    pumps_on = load_pump_settings(sessions).enabled
     with sessions() as db:
         statuses = {s.source: s for s in db.scalars(select(SourceStatus))}
         sources = []
@@ -30,8 +33,8 @@ def status_data(cfg: Config, sessions: sessionmaker[Session], active: set[str]) 
             st = statuses.get(name)
             sources.append({
                 "source": name,
-                "collecting": "yes" if name in active else "no",
-                "every_min": getattr(cfg.intervals, interval_field) // 60,
+                "collecting": "yes" if name in active and (name != "pumps" or pumps_on) else "no",
+                "every_min": round(getattr(cfg.intervals, interval_field) / 60, 1),
                 "last_success": local(st.last_success_ts) if st else "",
                 "last_error": local(st.last_error_ts) if st else "",
                 "error": (st.last_error_msg or "") if st else "",
@@ -71,7 +74,7 @@ def status_data(cfg: Config, sessions: sessionmaker[Session], active: set[str]) 
 
         counts = [{"table": m.__tablename__, "rows": db.scalar(select(func.count()).select_from(m))}
                   for m in (ThermostatReading, WeatherObs, TankReading, ZoneCall,
-                            PropaneDelivery, DailySummary)]
+                            PropaneDelivery, DailySummary, PumpEvent)]
 
     size_mb = sum(p.stat().st_size for p in cfg.data_dir.glob("heatmon.db*")) / 1e6
     return {"sources": sources, "thermostats": thermostats, "weather": weather, "tank": tank,

@@ -14,6 +14,7 @@ from heatmon.sources.base import Source
 from heatmon.sources.centriconnect import CentriConnectSource
 from heatmon.sources.nest import NestSource
 from heatmon.sources.open_meteo import OpenMeteoSource
+from heatmon.sources.pumps import PumpSource
 from heatmon.sources.wunderground import WundergroundSource
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ def build_sources(cfg: Config, sessions: sessionmaker[Session]) -> list[Source]:
             sources.append(cls(cfg, sessions))
         else:
             log.warning("%s: credentials missing from .env; not collecting", cls.name)
-    sources.append(OpenMeteoSource(cfg, sessions))
+    sources += [OpenMeteoSource(cfg, sessions), PumpSource(cfg, sessions)]  # the pump sensor checks its own settings
     alerts = AlertsJob(cfg, sessions, {s.name for s in sources})  # data sources only, not jobs
     return sources + [SummariesJob(cfg, sessions), alerts]
 
@@ -54,8 +55,9 @@ async def run_source(source: Source, sessions: sessionmaker[Session]) -> None:
         try:
             n = await source.poll()
             failures = 0
-            record_status(sessions, source.name)
-            log.info("%s: stored %d rows", source.name, n)
+            if n is not None:  # None: turned off in settings, so nothing to report
+                record_status(sessions, source.name)
+                log.info("%s: stored %d rows", source.name, n)
         except Exception as e:
             failures += 1
             msg = scrub(f"{type(e).__name__}: {e}")

@@ -15,13 +15,18 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
-from heatmon.db.models import (DailySummary, Event, PropaneDelivery, SourceStatus, TankReading, ThermostatHistory,
-                               ThermostatReading, WeatherObs, Zone, ZoneCall)
+from heatmon.db.models import (DailySummary, Event, PropaneDelivery, PumpEvent, SourceStatus, TankReading,
+                               ThermostatHistory, ThermostatReading, WeatherObs, Zone, ZoneCall)
+from heatmon.db.session import read_setting
 from heatmon.processing import baseline
+from heatmon.processing.pumps import Run, daily_pumps, derive_runs
+from heatmon.sources.pumps import PUMP_NAMES, PumpLink, last_states
+from heatmon.sources.pumps import load_settings as load_pump_settings
 from heatmon.processing.days import day_bounds, local_date
 from heatmon.processing.degree_days import HOUR, hourly_temps
 
 OVERSHOOT_WINDOW = timedelta(hours=6)
+PUMPS_STALE = timedelta(minutes=1)  # Overview shows pump states as last known after this
 
 
 def c_to_f(c: float | None) -> float | None:
@@ -485,8 +490,68 @@ def baseline_seasons(c: Ctx, ib: InvoiceBaseline | None = None) -> list[dict]:
     return baseline.by_season(ib.intervals, ib.hdd, ib.fit, price_per_gal(c)) if ib.fit else []
 
 
+# ---------- boiler pumps and hot water ----------
+
+def runs(c: Ctx) -> list[Run]:
+    """Pump runs that touch the range. Each pump's last switch before the range says
+    whether it was already running when the range began, and its first switch after the
+    range ends a run still going at the range's end."""
+    with c.sessions() as db:
+        before = (select(PumpEvent.pump, func.max(PumpEvent.ts).label("ts"))
+                  .where(PumpEvent.ts < c.lo).group_by(PumpEvent.pump).subquery())
+        after = (select(PumpEvent.pump, func.min(PumpEvent.ts).label("ts"))
+                 .where(PumpEvent.ts >= c.hi).group_by(PumpEvent.pump).subquery())
+        rows = db.execute(
+            select(PumpEvent.pump, PumpEvent.ts, PumpEvent.on, PumpEvent.gap)
+            .outerjoin(before, (PumpEvent.pump == before.c.pump) & (PumpEvent.ts == before.c.ts))
+            .outerjoin(after, (PumpEvent.pump == after.c.pump) & (PumpEvent.ts == after.c.ts))
+            .where(((PumpEvent.ts >= c.lo) & (PumpEvent.ts < c.hi)) | before.c.ts.is_not(None)
+                   | after.c.ts.is_not(None))
+            .order_by(PumpEvent.ts, PumpEvent.id)).all()
+    until = read_setting(c.sessions, "pump_link", PumpLink).last_contact or datetime.now(UTC)
+    return [r for r in derive_runs(rows, until) if r.end > c.lo and r.start < c.hi]
+
+
+def pump_runs(c: Ctx, rs: list[Run] | None = None) -> list[dict]:
+    return [{"pump": PUMP_NAMES.get(r.pump, r.pump), "start": c.local(r.start), "end": c.local(r.end),
+             "minutes": round(r.minutes, 1),
+             "note": "running" if r.open else ("contact lost, times are a guess" if r.gap else "")}
+            for r in (runs(c) if rs is None else rs)]
+
+
+def hot_water_daily(c: Ctx, rs: list[Run] | None = None) -> list[dict]:
+    """Pump minutes and hot water cycles, gallons and cost per day, from the first day with
+    pump data. Gallons assume full fire while the DHW pump runs."""
+    with c.sessions() as db:
+        first = db.scalar(select(func.min(PumpEvent.ts)))
+    if first is None:
+        return []
+    start = max(c.start, local_date(first, c.tz))
+    days = [start + timedelta(days=i) for i in range((c.end - start).days + 1)]
+    return daily_pumps(runs(c) if rs is None else rs, days, c.tz, c.cfg.boiler.input_btu_h, price_per_gal(c))
+
+
+def pumps_now(c: Ctx) -> list[dict]:
+    """Each pump's latest state, for the Overview page. Empty while the sensor is turned off
+    or has never reported. `current` is False when the Pi hasn't answered for a minute."""
+    if not load_pump_settings(c.sessions).enabled:
+        return []
+    with c.sessions() as db:
+        latest = last_states(db)
+    seen = read_setting(c.sessions, "pump_link", PumpLink).last_contact
+    current = seen is not None and datetime.now(UTC) - seen < PUMPS_STALE
+    return [{"pump": name, "on": latest[p][0], "since": c.local(latest[p][1]), "current": current,
+             "last_contact": c.local(seen)} for p, name in PUMP_NAMES.items() if p in latest]
+
+
+def has_pump_data(c: Ctx) -> bool:
+    with c.sessions() as db:
+        return db.scalar(select(PumpEvent.id).limit(1)) is not None
+
+
 DATASETS = {
     "daily": daily, "thermostat": thermostat, "zone_calls": zone_calls, "weather_hourly": weather_hourly,
     "tank": tank, "deliveries": deliveries, "weekly_propane": weekly_propane, "events": events,
     "delivery_intervals": delivery_intervals, "baseline_seasons": baseline_seasons,
+    "pump_runs": pump_runs, "hot_water_daily": hot_water_daily,
 }

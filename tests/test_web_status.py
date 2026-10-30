@@ -18,7 +18,7 @@ def test_status_data(cfg, sessions):
 
     d = status_data(cfg, sessions, active={"nest"})
 
-    assert [s["collecting"] for s in d["sources"]] == ["yes", "no", "no", "no", "no", "no"]
+    assert [s["collecting"] for s in d["sources"]] == ["yes", "no", "no", "no", "no", "no", "no"]
     assert d["sources"][0]["every_min"] == 2 and d["sources"][0]["last_success"]
     assert len(d["thermostats"]) == 4  # latest reading per thermostat only
     hall = next(t for t in d["thermostats"] if t["zone"] == "Hallway")

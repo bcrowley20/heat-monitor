@@ -10,7 +10,9 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Zone as ZoneConfig
-from heatmon.db.models import Base, SourceStatus, Zone
+from pydantic import BaseModel
+
+from heatmon.db.models import AppSetting, Base, SourceStatus, Zone
 
 MIGRATIONS = Path(__file__).parent / "migrations"
 
@@ -83,3 +85,15 @@ def record_status(sessions: sessionmaker[Session], source: str, error: str | Non
         else:
             row.last_error_ts, row.last_error_msg = now, error
         db.add(row)
+
+
+def read_setting[M: BaseModel](sessions: sessionmaker[Session], key: str, model: type[M]) -> M:
+    """A settings group saved from the app, or its defaults if never saved."""
+    with sessions() as db:
+        row = db.get(AppSetting, key)
+    return model.model_validate_json(row.value_json) if row else model()
+
+
+def write_setting(sessions: sessionmaker[Session], key: str, value: BaseModel) -> None:
+    with sessions.begin() as db:
+        db.merge(AppSetting(key=key, value_json=value.model_dump_json()))

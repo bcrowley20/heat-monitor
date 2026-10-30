@@ -13,8 +13,10 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
-from heatmon.db.models import Alert, AppSetting, SourceStatus, TankReading, ThermostatReading, Zone
+from heatmon.db.models import Alert, SourceStatus, TankReading, ThermostatReading, Zone
+from heatmon.db.session import read_setting, write_setting
 from heatmon.logs import scrub
+from heatmon.sources.pumps import load_settings as load_pump_settings
 
 log = logging.getLogger(__name__)
 
@@ -41,14 +43,11 @@ class AlertSettings(BaseModel):
 
 
 def load_settings(sessions: sessionmaker[Session]) -> AlertSettings:
-    with sessions() as db:
-        row = db.get(AppSetting, "alerts")
-    return AlertSettings.model_validate_json(row.value_json) if row else AlertSettings()
+    return read_setting(sessions, "alerts", AlertSettings)
 
 
 def save_settings(sessions: sessionmaker[Session], s: AlertSettings) -> None:
-    with sessions.begin() as db:
-        db.merge(AppSetting(key="alerts", value_json=s.model_dump_json()))
+    write_setting(sessions, "alerts", s)
 
 
 def conditions(sessions: sessionmaker[Session], s: AlertSettings, now: datetime, *, sources: set[str] = frozenset(),
@@ -116,18 +115,21 @@ class AlertsJob:
         self.interval_s, self.nest_s = cfg.intervals.alerts_s, cfg.intervals.nest_s
         self.started = datetime.now(UTC)
 
-    def _checked(self, s: AlertSettings, kind: str, subject: str) -> bool:
+    @staticmethod
+    def _checked(s: AlertSettings, sources: set[str], kind: str, subject: str) -> bool:
         """Whether this alert is still being checked. One that isn't closes without a message."""
         return {"tank_low": s.tank_low_on, "room_cold": s.room_cold_on,
-                "source_stale": s.source_stale_on and subject in self.sources}.get(kind, False)
+                "source_stale": s.source_stale_on and subject in sources}.get(kind, False)
 
     async def poll(self) -> int:
         s = load_settings(self.sessions)
         now = datetime.now(UTC)
+        # The pump sensor is watched only while it is turned on.
+        sources = self.sources if load_pump_settings(self.sessions).enabled else self.sources - {"pumps"}
         changed = 0
         with self.sessions.begin() as db:
             open_alerts = {(a.kind, a.subject): a for a in db.scalars(select(Alert).where(Alert.cleared_ts.is_(None)))}
-            found = conditions(self.sessions, s, now, sources=self.sources, started=self.started,
+            found = conditions(self.sessions, s, now, sources=sources, started=self.started,
                                open_keys=set(open_alerts), nest_s=self.nest_s)
             for key, message in found.items():
                 if key not in open_alerts:
@@ -137,7 +139,7 @@ class AlertsJob:
                 if key not in found:
                     a.cleared_ts = now
                     changed += 1
-                    if not self._checked(s, *key) or not a.start_sent:
+                    if not self._checked(s, sources, *key) or not a.start_sent:
                         a.start_sent = a.clear_sent = True  # turned off, or never announced: stay quiet
         await self._send_pending(s)
         return changed

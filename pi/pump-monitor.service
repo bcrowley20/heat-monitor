@@ -1,0 +1,18 @@
+[Unit]
+Description=Boiler pump monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/pump-monitor/pump_monitor.py
+Restart=always
+RestartSec=5
+# Runs as a throwaway user that may only use the GPIO pins.
+DynamicUser=yes
+SupplementaryGroups=gpio
+# The GPIO library writes small files in its working directory.
+StateDirectory=pump-monitor
+WorkingDirectory=/var/lib/pump-monitor
+
+[Install]
+WantedBy=multi-user.target

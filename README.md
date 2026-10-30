@@ -63,9 +63,9 @@ For debugging, `heatmon collect` only collects and `heatmon serve` only serves p
 
 ## Pages
 
-**Overview** shows current conditions, today against yesterday, and propane per degree day by week. **Zones** has one chart per zone: room temperature and setpoint on top, with shading while the zone calls for heat, and outdoor temperature in a panel below. Its table lists every call with its overshoot, which is the highest the room rose above its setpoint in the 6 hours after the call ended. **Runtime** shows minutes calling per day and per zone, and how calling time tracks degree days. **Propane** shows tank readings, fills, weekly usage, and how usage tracks degree days. **Weather** shows temperature, sunshine and wind. **Status** shows each data source's health.
+**Overview** shows current conditions, today against yesterday, and propane per degree day by week. **Zones** has one chart per zone: room temperature and setpoint on top, with shading while the zone calls for heat, and outdoor temperature in a panel below. Its table lists every call with its overshoot, which is the highest the room rose above its setpoint in the 6 hours after the call ended. **Runtime** shows minutes calling per day and per zone, and how calling time tracks degree days. With the pump sensor running, it also shows when each boiler pump ran. **Propane** shows tank readings, fills, weekly usage, and how usage tracks degree days. **Hot water** shows hot water cycles, minutes and estimated cost from the boiler pump sensor. **Weather** shows temperature, sunshine and wind. **Status** shows each data source's health.
 
-Zones, Runtime, Propane and Weather have a date range picker at the top. The default is the last 14 days. Grey lines with a small marker show events, such as setting changes. Hover over the marker to read the event.
+Zones, Runtime, Propane, Hot water and Weather have a date range picker at the top. The default is the last 14 days. Grey lines with a small marker show events, such as setting changes. Hover over the marker to read the event.
 
 The scatter charts split days into settings periods. Each setting change starts a new period, and changes on the same day count as one. The day of a change belongs to the period before it. Propane is plotted as 7-day averages, because the tank reports in whole percents and single days are too coarse.
 
@@ -103,13 +103,77 @@ A zone that no longer exists stays in `config.yaml` with the day it was retired,
 
 The gear button at the top right of every page opens the settings. There are three alerts, and each one can be turned off or given its own limits. The propane alert fires when the tank drops below a set percentage. The data source alert fires when a source such as Nest or the weather station has sent nothing for a set number of hours. The room alert fires when a room stays more than a set number of degrees below its setpoint for a set number of hours. Rooms in Eco mode or with heat off are left alone.
 
-The app checks every 5 minutes. You get one message when an alert starts and one when it clears, never repeats in between. A tank alert clears only once the level is 2 points above the limit, so small swings near the limit stay quiet. A source that has never worked since the app started also counts as sending nothing. Turning an alert off closes any open one without a message. Messages go to your phone through Pushover. If a message can't get through, for example while the internet is down, it is sent on a later check. In Pushover, create an application to get an application token, then paste it and your user key into the settings. "Send test" checks that they work. Open pages also show a popup, and a red count on the gear shows how many alerts are open.
+The app checks every 5 minutes. You get one message when an alert starts and one when it clears, never repeats in between. A tank alert clears only once the level is 2 points above the limit, so small swings near the limit stay quiet. A source that has never worked since the app started also counts as sending nothing. Turning an alert off closes any open one without a message. Messages go to your phone through Pushover. If a message can't get through, for example while the internet is down, it is sent on a later check. In Pushover, create an application to get an application token, then paste it and your user key into the settings. "Test Pushover" checks that they work. Open pages also show a popup, and a red count on the gear shows how many alerts are open.
 
 The Pushover token is stored in the database, and the settings page has no login. Anyone on your home network can open it.
 
+## Boiler pump sensor
+
+A Raspberry Pi 2 on the home network watches the boiler's three pump outputs: the Boiler Pump (the boiler's own loop), the System Pump (hot water out to the zones) and the DHW Pump (heating the domestic hot water tank). Hot water has priority, so a DHW Pump run is time the boiler spends making hot water instead of heating the house.
+
+Each pump output powers a plain 5 V USB phone charger. When the pump runs, the charger puts out 5 V. A pair of resistors cuts that to 2.5 V for a Pi input pin. The Pi 2 reads anything above 1.6 V as on and below 0.9 V as off. Its pins are damaged by 5 V, so never connect a charger straight to a pin. The 2.5 V level leaves room for a cheap charger that runs high with no load.
+
+| Pump | Pi input | Header pin |
+|---|---|---|
+| Boiler Pump | GPIO22 | 15 |
+| System Pump | GPIO23 | 16 |
+| DHW Pump | GPIO24 | 18 |
+| All three chargers' 0 V | Ground | 14 or 20 |
+
+Wire each charger like this, with two 10k resistors:
+
+```
+charger +5 V ──[10k]──┬── GPIO pin
+                      │
+                    [10k]
+                      │
+charger 0 V ──────────┴── Pi ground
+```
+
+The bottom resistor also holds the pin at 0 V while the pump is off. The pump outputs are line voltage. Plug each charger into an outlet or cord wired to its pump output, and have someone qualified do that part. The chargers keep the low-voltage side separate from the mains. A charger can take up to a second to die away after its pump stops, so stop times may run slightly late.
+
+### Setting up the Pi
+
+1. Use Raspberry Pi Imager to write Raspberry Pi OS Lite (32-bit) to a card. In its settings, set a host name, a user and password, and turn on SSH. The Pi 2 has no built-in Wi-Fi, so plug it into the network with a cable or use a USB Wi-Fi adapter.
+2. In your router, reserve a fixed address for the Pi so it doesn't change.
+3. From this folder, copy the two files across:
+
+   ```sh
+   scp pi/pump_monitor.py pi/pump-monitor.service <user>@<pi-address>:
+   ```
+
+4. On the Pi, install them and start the service:
+
+   ```sh
+   sudo mkdir -p /opt/pump-monitor
+   sudo cp pump_monitor.py /opt/pump-monitor/
+   sudo cp pump-monitor.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now pump-monitor
+   journalctl -u pump-monitor -f    # watch its log
+   ```
+
+The program needs gpiozero, which Pi OS Lite includes. If the log says it is missing, run `sudo apt install python3-gpiozero python3-lgpio`. The service starts at boot and restarts itself after a crash.
+
+Open `http://<pi-address>:8081/` in a browser. It shows each pump's state, how long it has been in that state, and the last 20 switches. Run a pump and reload to see it change. To use other pins or another port, edit `PUMPS` or `PORT` at the top of `pump_monitor.py` and restart the service.
+
+### Turning it on in heatmon
+
+Open the gear button, enter the Pi's address under "Boiler pump sensor" and click "Test Pi". If it answers, switch on "Collect from the Pi" and save. No restart is needed. Heatmon asks the Pi for new switches every 5 seconds, set by `pumps_s` in `config.yaml`.
+
+### How it works
+
+The Pi checks its pins every 20 ms. A change counts once it has held for 0.2 seconds, and it is timed from when it first appeared. The Pi keeps the last 10,000 switches, numbered in order, so heatmon asks only for the ones it hasn't seen. A short network drop or a heatmon restart loses nothing. Times come from the Pi's uptime counter, not its clock. The Pi 2 has no clock battery, so this keeps times right even before it has set its clock after a power cut.
+
+When the Pi is offline, heatmon backs off and tries less often, up to every 15 minutes, and the rest of the app carries on. The Status page shows the error, and the "data source sends nothing" alert covers the Pi while collection is on. If the Pi restarted or heatmon fell more than 10,000 switches behind, some switches are lost. Any pump that was running is then taken to have stopped when heatmon last heard from the Pi, unless the Pi says it has been running since before then. Runs with a guessed start or end are marked "contact lost, times are a guess". The Overview page shows pump states only while collection is on, and labels them "last known" when the Pi hasn't answered for a minute.
+
+### Hot water cost
+
+The boiler is a Lochinvar Knight WHN110 and runs at full fire, 110,000 BTU/h, while heating the hot water tank. A gallon of propane holds about 91,500 BTU. So each minute the DHW Pump runs burns about 0.02 gallons. The cost uses the propane price from `config.yaml`, or the latest invoice if that isn't set. Change `input_btu_h` under `boiler` in `config.yaml` for a different boiler. The figure runs a little high if the DHW Pump keeps running for a short time after the burner stops.
+
 ## Data API
 
-Every table has a "Download CSV" link. The same data is available as JSON at `/api/<name>?start=YYYY-MM-DD&end=YYYY-MM-DD`, or as CSV at `/api/<name>.csv`. The names are `daily`, `thermostat`, `zone_calls`, `weather_hourly`, `tank`, `deliveries`, `weekly_propane`, `events`, `delivery_intervals` and `baseline_seasons`.
+Every table has a "Download CSV" link. The same data is available as JSON at `/api/<name>?start=YYYY-MM-DD&end=YYYY-MM-DD`, or as CSV at `/api/<name>.csv`. The names are `daily`, `thermostat`, `zone_calls`, `weather_hourly`, `tank`, `deliveries`, `weekly_propane`, `events`, `delivery_intervals`, `baseline_seasons`, `pump_runs` and `hot_water_daily`.
 
 ## Calculations
 

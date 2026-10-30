@@ -42,6 +42,7 @@ class Intervals(BaseModel):
     open_meteo_s: int = 3600
     summaries_s: int = 3600
     alerts_s: int = 300
+    pumps_s: int = Field(5, ge=1)  # boiler pump sensor, when turned on in the app's settings
 
 
 class Propane(BaseModel):
@@ -55,6 +56,12 @@ class Propane(BaseModel):
     price_per_gal: float | None = None
 
 
+class Boiler(BaseModel):
+    # Fuel burned per hour at full fire. A Lochinvar Knight WHN110 is 22,000 to 110,000 BTU/h,
+    # and it runs at full fire while heating the hot water tank.
+    input_btu_h: float = 110_000
+
+
 class Config(BaseModel):
     data_dir: Path = Path("data")
     host: str = "0.0.0.0"
@@ -66,6 +73,7 @@ class Config(BaseModel):
     longitude: float
     intervals: Intervals = Intervals()
     propane: Propane = Propane()
+    boiler: Boiler = Boiler()
     zones: list[Zone] = []
     secrets: Secrets = Field(default_factory=Secrets, exclude=True)
 

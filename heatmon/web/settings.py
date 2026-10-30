@@ -1,8 +1,9 @@
-"""The settings button in the page header: alert settings, open alerts, and popups."""
+"""The settings button in the page header: alerts, the pump sensor, open alerts, and popups."""
 
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
+import httpx
 from nicegui import ui
 from pydantic import ValidationError
 from sqlalchemy import or_, select
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from heatmon.alerts import AlertSettings, load_settings, save_settings, send_pushover
 from heatmon.config import Config
 from heatmon.db.models import Alert
+from heatmon.sources import pumps
 
 POPUP_CHECK_S = 30
 
@@ -83,6 +85,26 @@ def settings_button(cfg: Config, sessions: sessionmaker[Session]) -> None:
             user = ui.input("User key", value=s.pushover_user_key, password=True,
                             password_toggle_button=True).classes("w-full")
 
+            ps = pumps.load_settings(sessions)
+            ui.label("Boiler pump sensor").classes("text-sm font-semibold pt-2")
+            ui.label("The Raspberry Pi that watches the Boiler, System and DHW pumps. "
+                     "See the README to set it up.").classes("text-xs text-gray-500")
+            with ui.row().classes("w-full items-center gap-2"):
+                pump_on = ui.switch("Collect from the Pi", value=ps.enabled)
+                address = ui.input("Pi address", value=ps.address, placeholder="192.168.1.50 or 192.168.1.50:8081") \
+                    .classes("grow")
+
+            async def test_pi():
+                try:
+                    async with httpx.AsyncClient() as client:
+                        reply = await pumps.fetch(client, address.value or "")
+                except Exception as e:
+                    ui.notify(f"No answer from the pump sensor: {type(e).__name__}: {e}", type="negative")
+                    return
+                states = ", ".join(f"{pumps.PUMP_NAMES.get(n, n)} {'on' if p.on else 'off'}"
+                                   for n, p in reply.pumps.items())
+                ui.notify(f"Pump sensor answered: {states}.", type="positive")
+
             def current() -> AlertSettings | None:
                 try:
                     return AlertSettings(
@@ -97,7 +119,15 @@ def settings_button(cfg: Config, sessions: sessionmaker[Session]) -> None:
             def save():
                 if (s := current()) is None:
                     return
+                if pump_on.value:
+                    try:
+                        pumps.base_url(address.value or "")
+                    except ValueError:
+                        ui.notify("Enter the Pi's address, or turn the pump sensor off.", type="warning")
+                        return
                 save_settings(sessions, s)
+                pumps.save_settings(sessions, pumps.PumpSettings(enabled=pump_on.value,
+                                                                 address=(address.value or "").strip()))
                 ui.notify("Settings saved. Alerts are checked every few minutes.")
                 dialog.close()
 
@@ -114,7 +144,8 @@ def settings_button(cfg: Config, sessions: sessionmaker[Session]) -> None:
                     ui.notify(f"Pushover did not accept the message: {type(e).__name__}", type="negative")
 
             with ui.row().classes("w-full justify-end gap-2 pt-2"):
-                ui.button("Send test", on_click=test).props("flat")
+                ui.button("Test Pi", on_click=test_pi).props("flat")
+                ui.button("Test Pushover", on_click=test).props("flat")
                 ui.button("Cancel", on_click=dialog.close).props("flat")
                 ui.button("Save", on_click=save).props("unelevated")
         form()

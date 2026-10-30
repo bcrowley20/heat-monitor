@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from heatmon.alerts import AlertSettings, AlertsJob, conditions, load_settings, save_settings
 from heatmon.db.models import Alert, SourceStatus, TankReading, ThermostatReading, Zone
 from heatmon.db.session import insert_ignore
-from heatmon.web.alerts import Seen, changes
+from heatmon.web.settings import Seen, changes
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 
@@ -176,3 +176,14 @@ async def test_alerts_before_pushover_setup_are_not_sent_later(cfg, sessions):
     save_settings(sessions, AlertSettings(pushover_app_token="t", pushover_user_key="u"))
     await job.poll()
     assert sent == []
+
+
+async def test_pump_sensor_watched_only_when_on(cfg, sessions):
+    from heatmon.sources.pumps import PumpSettings, save_settings as save_pumps
+    job = AlertsJob(cfg, sessions, {"pumps"}, send=None)
+    job.started = datetime.now(UTC) - timedelta(hours=8)
+    assert await job.poll() == 0
+    save_pumps(sessions, PumpSettings(enabled=True, address="10.0.0.5"))
+    assert await job.poll() == 1
+    with sessions() as db:
+        assert db.query(Alert).one().subject == "pumps"

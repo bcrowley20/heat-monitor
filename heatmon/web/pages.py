@@ -7,6 +7,7 @@ from nicegui import ui
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
+from heatmon.sources.pumps import PUMP_NAMES
 from heatmon.web import data
 from heatmon.web.components import (AXIS, CARD, GRID, HEATING_BAND, INK, INK_2, MUTED, SERIES, SUN_BAND, chart,
                                     date_range, event_markers, frame, layout, stat, table)
@@ -34,6 +35,21 @@ def _by_period(c: data.Ctx, days: list[dict], y_key: str) -> dict[str, list[dict
             groups[data.period_of_day(date.fromisoformat(d["date"]), periods, c.tz)].append(
                 {"label": d["date"], "days": 1, "hdd": d["hdd"], "y": d[y_key]})
     return groups
+
+
+def _pump_lanes(runs: list, c: data.Ctx) -> list[dict]:
+    """One lane per pump with a filled block for each run."""
+    traces = []
+    for i, (pump, name) in enumerate(PUMP_NAMES.items()):
+        xs, ys = [], []
+        for r in runs:
+            if r.pump == pump:
+                a, b = c.local(max(r.start, c.lo)), c.local(min(r.end, c.hi))
+                xs += [a, a, b, b, a, None]
+                ys += [i + 0.15, i + 0.85, i + 0.85, i + 0.15, i + 0.15, None]
+        traces.append({"type": "scatter", "mode": "lines", "name": name, "x": xs, "y": ys, "fill": "toself",
+                       "fillcolor": SERIES[[0, 2, 1][i]], "line": {"width": 0}, "hoverinfo": "skip"})
+    return traces
 
 
 def _bins(groups: dict[str, list[dict]], size: int = 7, min_days: int = 4) -> dict[str, list[dict]]:
@@ -110,6 +126,20 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                             else:
                                 ui.icon("pause_circle").classes("text-gray-400")
                                 ui.label("Not calling").classes("text-sm text-gray-500")
+
+            pumps = data.pumps_now(c)
+            if pumps:
+                with ui.row().classes("w-full gap-3"):
+                    for p in pumps:
+                        with ui.card().classes(CARD + " min-w-40"):
+                            ui.label(p["pump"]).classes("text-xs text-gray-500")
+                            with ui.row().classes("items-center gap-1"):
+                                ui.icon("sync" if p["on"] else "pause_circle") \
+                                    .style(f"color:{SERIES[0] if p['on'] and p['current'] else MUTED}")
+                                ui.label("Running" if p["on"] else "Off").classes("text-lg font-semibold")
+                            ui.label(f"since {p['since']}" if p["current"] else
+                                     f"last known; no answer from the Pi since {p['last_contact'] or 'start'}") \
+                                .classes("text-xs text-gray-500")
 
             days = {d["date"]: d for d in data.daily(data.Ctx(cfg, sessions, today - timedelta(days=1), today))}
             t, y = days.get(today.isoformat(), {}), days.get((today - timedelta(days=1)).isoformat(), {})
@@ -239,6 +269,13 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                    "marker": {"size": 6}} for i, z in enumerate(names)]
         chart("Calls per day by zone, today so far (many short calls suggest short cycling)", counts,
               _with_events(layout(300, yaxis={"title": {"text": "calls"}}), events))
+        pump_runs = data.runs(c)
+        if pump_runs:
+            chart("Boiler pumps running (from the pump sensor)", _pump_lanes(pump_runs, c),
+                  _with_events(layout(220, hovermode="closest", showlegend=False,
+                                      yaxis={"tickvals": [0.5, 1.5, 2.5], "ticktext": list(PUMP_NAMES.values()),
+                                             "range": [0, 3], "fixedrange": True, "gridcolor": "rgba(0,0,0,0)"}),
+                               events))
         keep = ["date", "hdd", "any_zone_call_min", "total_zone_call_min", "zone_calls", "runtime_source"]
         keep += [f"{z} {kind}" for z in names for kind in ("min", "calls")]
         table("Daily runtime", [{k: d[k] for k in keep} for d in days], "daily", c.start, c.end)
@@ -329,3 +366,64 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
         keep = ("date", "hdd", "mean_temp_f", "min_temp_f", "max_temp_f", "solar_kwh_m2", "weather_hours",
                 "open_meteo_hours")
         table("Daily weather", [{k: d[k] for k in keep} for d in data.daily(c)], "daily", c.start, c.end)
+
+    @ui.page("/hotwater", title="Hot water · Heating Monitor")
+    def hotwater(start: str | None = None, end: str | None = None):
+        c = ctx(start, end)
+        frame(cfg, sessions, "/hotwater", c.start, c.end)
+        rs = data.runs(c)
+        days, events = data.hot_water_daily(c, rs), data.events(c)
+        if not days:
+            with ui.card().classes(CARD + " w-full"):
+                if data.has_pump_data(c):
+                    ui.label("No pump sensor data in this range").classes("text-sm font-semibold")
+                    ui.label("The sensor started after this range ends. Pick a later range.") \
+                        .classes("text-sm text-gray-500")
+                else:
+                    ui.label("No pump sensor data yet").classes("text-sm font-semibold")
+                    ui.label("Set up the Raspberry Pi pump sensor (see the README), then turn it on and enter its "
+                             "address under the gear button at the top right.").classes("text-sm text-gray-500")
+            return
+        cycles = [r for r in rs if r.pump == "dhw" and r.start >= c.lo]
+        gal = sum(d["dhw_gal_est"] for d in days)
+        costs = [d["dhw_cost_est"] for d in days if d["dhw_cost_est"] is not None]
+        with ui.row().classes("w-full gap-3 pt-2"):
+            stat("Hot water cycles", f"{len(cycles)}", f"{len(cycles) / len(days):.1f} a day")
+            stat("Average cycle", _fmt(sum(r.minutes for r in cycles) / len(cycles) if cycles else None, " min", 1))
+            stat("Propane for hot water (est.)", _fmt(gal, " gal", 1), f"{gal / len(days):.2f} gal a day")
+            stat("Cost (est.)", f"${sum(costs):,.2f}" if costs else "—",
+                 f"${sum(costs) / len(days):.2f} a day" if costs else "no propane price yet")
+        ui.label(f"Estimates assume the boiler burns {cfg.boiler.input_btu_h:,.0f} BTU/h (full fire) while the "
+                 "hot water pump runs, and 91,500 BTU per gallon of propane.").classes("text-xs text-gray-500")
+
+        x = [d["date"] for d in days]
+        chart("Hot water heating per day (today so far)", [
+            {"type": "bar", "name": "Minutes", "x": x, "y": [d["dhw_min"] for d in days],
+             "marker": {"color": SERIES[1]}, "hovertemplate": "%{y:.0f} min"},
+            {"type": "scatter", "mode": "lines+markers", "name": "Cycles", "x": x, "y": [d["dhw_cycles"] for d in days],
+             "yaxis": "y2", "line": {"color": INK, "width": 2}, "marker": {"size": 6}, "hovertemplate": "%{y} cycles"}],
+            _with_events(layout(320, bargap=0.25, margin={"r": 56}, yaxis={"title": {"text": "minutes"}},
+                                yaxis2={"overlaying": "y", "side": "right", "showgrid": False, "rangemode": "tozero",
+                                        "tickfont": {"color": MUTED}, "title": {"text": "cycles"}}), events))
+
+        weeks: dict[str, list[dict]] = {}
+        for d in days:
+            day = date.fromisoformat(d["date"])
+            weeks.setdefault((day - timedelta(days=day.weekday())).isoformat(), []).append(d)
+        priced = all(d["dhw_cost_est"] is not None for d in days)
+        key, unit = ("dhw_cost_est", "$") if priced else ("dhw_gal_est", " gal")
+        chart(f"Hot water {'cost' if priced else 'propane'} by week (est., weeks start Monday)", [{
+            "type": "bar", "x": list(weeks), "y": [round(sum(d[key] for d in w), 2) for w in weeks.values()],
+            "marker": {"color": SERIES[0]}, "text": [f"{len(w)} days" if len(w) < 7 else "" for w in weeks.values()],
+            "hovertemplate": "week of %{x}: %{y:.2f}" + unit + " %{text}<extra></extra>"}],
+            layout(260, showlegend=False, yaxis={"title": {"text": "dollars" if priced else "gallons"}}))
+
+        chart("Length of each hot water cycle", [{
+            "type": "scatter", "mode": "markers", "x": [c.local(r.start) for r in cycles],
+            "y": [round(r.minutes, 1) for r in cycles], "marker": {"color": SERIES[1], "size": 7},
+            "hovertemplate": "%{x}: %{y:.1f} min<extra></extra>"}],
+            _with_events(layout(260, showlegend=False, hovermode="closest",
+                                yaxis={"title": {"text": "minutes"}, "rangemode": "tozero"}), events))
+
+        table("Hot water and pumps by day", days, "hot_water_daily", c.start, c.end)
+        table("Pump runs", data.pump_runs(c, rs), "pump_runs", c.start, c.end)

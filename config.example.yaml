@@ -18,6 +18,7 @@ intervals:
   open_meteo_s: 3600      # solar estimates and temperature gap filling
   summaries_s: 3600       # rebuild zone calls and daily summaries
   alerts_s: 300           # check alert conditions
+  pumps_s: 5              # boiler pump sensor (turn it on in the app's settings), minimum 1
 
 propane:
   tank_size_gal: 1000
@@ -27,6 +28,9 @@ propane:
   base_gal_per_day: 1.0
   gal_per_hdd: 0.15
   # price_per_gal: 2.27       # leave unset to use the most recent invoice's price
+
+boiler:
+  input_btu_h: 110000     # full-fire input; hot water heating runs at full fire
 
 # Zones are matched to thermostats by the Nest room name or the thermostat's custom
 # name. If a thermostat doesn't match, the log names it; then set nest_device_id here.

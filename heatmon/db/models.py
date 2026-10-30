@@ -200,3 +200,19 @@ class Alert(Base):
     # Whether Pushover has the start and clear messages. Unsent ones are retried.
     start_sent: Mapped[bool] = mapped_column(default=False)
     clear_sent: Mapped[bool] = mapped_column(default=False)
+
+
+class PumpEvent(Base):
+    """A boiler pump switching on or off, from the Pi pump sensor."""
+
+    __tablename__ = "pump_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # The Pi's run ID and switch number. Unset for a switch heatmon added to fill a gap.
+    boot_id: Mapped[str | None]
+    seq: Mapped[int | None]
+    pump: Mapped[str]  # boiler, system or dhw
+    ts: Mapped[datetime]
+    on: Mapped[bool]
+    gap: Mapped[bool] = mapped_column(default=False)  # time is a guess: contact with the Pi was lost
+    __table_args__ = (Index("ux_pump_events_boot_seq", "boot_id", "seq", unique=True),
+                      Index("ix_pump_events_pump_ts", "pump", "ts"))

@@ -8,10 +8,10 @@ from nicegui import ui
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
-from heatmon.web.alerts import settings_button
+from heatmon.web.settings import settings_button
 
 PAGES = [("/", "Overview"), ("/zones", "Zones"), ("/runtime", "Runtime"), ("/propane", "Propane"),
-         ("/weather", "Weather"), ("/compare", "Compare"), ("/events", "Events & settings"), ("/status", "Status")]
+         ("/hotwater", "Hot water"), ("/weather", "Weather"), ("/compare", "Compare"), ("/events", "Events & settings"), ("/status", "Status")]
 RANGELESS = {"/compare", "/events", "/status"}  # pages that don't use the shared date range
 DEFAULT_DAYS = 14
 
