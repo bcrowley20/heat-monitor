@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from heatmon.config import Config
 from heatmon.db.models import TankReading
 from heatmon.logs import scrub
+from heatmon.sources.tank_csv import SAME_REPORT
 
 API_URL = "https://api.centriconnect.com/centriconnect/{user_id}/device/{device_id}/all-data"
 
@@ -58,7 +59,8 @@ class CentriConnectSource:
         row = tank_row(await self.fetch())
         with self.sessions.begin() as db:
             last = db.scalars(select(TankReading).order_by(TankReading.ts.desc()).limit(1)).first()
-            if last and last.ts == row.ts and last.level_pct == row.level_pct:
+            # A reading imported from the MyPropane CSV is the same report, stamped to the minute.
+            if last and abs(last.ts - row.ts) < SAME_REPORT and last.level_pct == row.level_pct:
                 return 0
             db.merge(row)
         return 1

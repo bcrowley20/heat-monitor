@@ -85,6 +85,16 @@ The columns are in `deliveries_template.csv`. Dates can be `2025-10-30` or `10/3
 
 The invoices give a baseline from before the monitor existed. Usage between two deliveries is the later delivery's gallons, corrected when the two fills ended at different tank levels. The app then fits gallons used = base load × days + gallons per degree day × degree days across all delivery periods. The base load covers hot water, cooking and the fireplace. The baseline needs weather history covering the invoices, so run the backfill from the first invoice date. The Propane page shows the baseline, totals by heating season, and the usage between each pair of deliveries. Any period with an unusually high daily rate is flagged, because that usually means a wrong date or a copied row.
 
+## Past tank readings from MyPropane
+
+The live feed only gives the latest tank reading. The MyPropane data table export has every past reading. Save it as a CSV, copy it to the server, and run:
+
+```sh
+uv run heatmon import-tank-csv ~/Downloads/hidden-valley-data-table.csv
+```
+
+Only the time and tank level are kept. The times in the file are local time. A line within 10 minutes of a reading already saved is the same report, so it is skipped. That makes it safe to import a newer export over an older one. Lines the app can't read are listed and skipped. It then rebuilds the daily summaries, so propane per day goes back as far as the file does. Run the backfill over the same dates to get degree days for them.
+
 ## Nest history from Google Takeout
 
 The Nest API has no history, but a Google Takeout export of your Nest data does. It has a record for every 15 minutes going back about two years: minutes spent heating, room temperature, setpoint and humidity. Request it at <https://takeout.google.com> (choose only "Nest"), copy the zip to the server, and run:

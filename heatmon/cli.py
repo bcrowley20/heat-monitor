@@ -1,5 +1,5 @@
 """Command line: heatmon auth nest | run | serve | collect | backfill | rebuild-summaries | import-deliveries |
-import-nest-takeout"""
+import-nest-takeout | import-tank-csv"""
 
 import argparse
 import asyncio
@@ -33,6 +33,8 @@ def main(argv: list[str] | None = None) -> None:
     imp.add_argument("file", type=Path)
     tk = sub.add_parser("import-nest-takeout", help="add thermostat history from a Google Takeout zip")
     tk.add_argument("file", type=Path)
+    tc = sub.add_parser("import-tank-csv", help="add past tank readings from a MyPropane data table CSV")
+    tc.add_argument("file", type=Path)
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -78,6 +80,16 @@ def main(argv: list[str] | None = None) -> None:
                       f"{r['records']} records, {r['added']} new")
             print("Rebuilding daily summaries...")
             rebuild(cfg, sessions)
+        case "import-tank-csv":
+            from heatmon.processing.summaries import rebuild
+            from heatmon.sources.tank_csv import import_tank_csv
+            added, skipped, problems = import_tank_csv(cfg, sessions, args.file.read_text(encoding="utf-8"))
+            for p in problems:
+                print("Skipped unreadable", p)
+            print(f"Added {added} tank readings, skipped {skipped} already saved.")
+            if added:
+                print("Rebuilding daily summaries...")
+                rebuild(cfg, sessions)
 
 
 def _auth_nest(cfg) -> None:
