@@ -37,10 +37,10 @@ def _by_period(c: data.Ctx, days: list[dict], y_key: str) -> dict[str, list[dict
     return groups
 
 
-def _pump_lanes(runs: list, c: data.Ctx) -> list[dict]:
+def _pump_lanes(runs: list, c: data.Ctx, pumps: dict[str, str]) -> list[dict]:
     """One lane per pump with a filled block for each run."""
     traces = []
-    for i, (pump, name) in enumerate(PUMP_NAMES.items()):
+    for i, (pump, name) in enumerate(pumps.items()):
         xs, ys = [], []
         for r in runs:
             if r.pump == pump:
@@ -48,7 +48,7 @@ def _pump_lanes(runs: list, c: data.Ctx) -> list[dict]:
                 xs += [a, a, b, b, a, None]
                 ys += [i + 0.15, i + 0.85, i + 0.85, i + 0.15, i + 0.15, None]
         traces.append({"type": "scatter", "mode": "lines", "name": name, "x": xs, "y": ys, "fill": "toself",
-                       "fillcolor": SERIES[[0, 2, 1][i]], "line": {"width": 0}, "hoverinfo": "skip"})
+                       "fillcolor": SERIES[[0, 2, 1][list(PUMP_NAMES).index(pump)]], "line": {"width": 0}, "hoverinfo": "skip"})
     return traces
 
 
@@ -138,7 +138,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                                     .style(f"color:{SERIES[0] if p['on'] and p['current'] else MUTED}")
                                 ui.label("Running" if p["on"] else "Off").classes("text-lg font-semibold")
                             ui.label(f"since {p['since']}" if p["current"] else
-                                     f"last known; no answer from the Pi since {p['last_contact'] or 'start'}") \
+                                     f"last known; no answer from the sensor since {p['last_contact'] or 'start'}") \
                                 .classes("text-xs text-gray-500")
 
             days = {d["date"]: d for d in data.daily(data.Ctx(cfg, sessions, today - timedelta(days=1), today))}
@@ -271,10 +271,12 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
               _with_events(layout(300, yaxis={"title": {"text": "calls"}}), events))
         pump_runs = data.runs(c)
         if pump_runs:
-            chart("Boiler pumps running (from the pump sensor)", _pump_lanes(pump_runs, c),
-                  _with_events(layout(220, hovermode="closest", showlegend=False,
-                                      yaxis={"tickvals": [0.5, 1.5, 2.5], "ticktext": list(PUMP_NAMES.values()),
-                                             "range": [0, 3], "fixedrange": True, "gridcolor": "rgba(0,0,0,0)"}),
+            sensed = data.sensed_pumps(c)
+            chart("Boiler pumps running (from the pump sensor)", _pump_lanes(pump_runs, c, sensed),
+                  _with_events(layout(80 + 50 * len(sensed), hovermode="closest", showlegend=False,
+                                      yaxis={"tickvals": [i + 0.5 for i in range(len(sensed))],
+                                             "ticktext": list(sensed.values()), "range": [0, len(sensed)],
+                                             "fixedrange": True, "gridcolor": "rgba(0,0,0,0)"}),
                                events))
         keep = ["date", "hdd", "any_zone_call_min", "total_zone_call_min", "zone_calls", "runtime_source"]
         keep += [f"{z} {kind}" for z in names for kind in ("min", "calls")]
@@ -381,7 +383,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                         .classes("text-sm text-gray-500")
                 else:
                     ui.label("No pump sensor data yet").classes("text-sm font-semibold")
-                    ui.label("Set up the Raspberry Pi pump sensor (see the README), then turn it on and enter its "
+                    ui.label("Set up the Cardputer pump sensor (see the README), then turn it on and enter its "
                              "address under the gear button at the top right.").classes("text-sm text-gray-500")
             return
         cycles = [r for r in rs if r.pump == "dhw" and r.start >= c.lo]

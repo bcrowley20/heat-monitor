@@ -119,63 +119,69 @@ The Pushover token is stored in the database, and the settings page has no login
 
 ## Boiler pump sensor
 
-A Raspberry Pi 2 on the home network watches the boiler's three pump outputs: the Boiler Pump (the boiler's own loop), the System Pump (hot water out to the zones) and the DHW Pump (heating the domestic hot water tank). Hot water has priority, so a DHW Pump run is time the boiler spends making hot water instead of heating the house.
+An M5Stack Cardputer on the home network watches two of the boiler's pump outputs: the System Pump (hot water out to the zones) and the DHW Pump (heating the domestic hot water tank). Hot water has priority, so a DHW Pump run is time the boiler spends making hot water instead of heating the house. The original Cardputer has only two free input pins, so the Boiler Pump (the boiler's own loop) is not watched. Its column in the hot water table stays blank, and the Runtime chart shows two lanes.
 
-Each pump output powers a plain 5 V USB phone charger. When the pump runs, the charger puts out 5 V. A pair of resistors cuts that to 2.5 V for a Pi input pin. The Pi 2 reads anything above 1.6 V as on and below 0.9 V as off. Its pins are damaged by 5 V, so never connect a charger straight to a pin. The 2.5 V level leaves room for a cheap charger that runs high with no load.
+Each pump output powers a plain 5 V USB phone charger. When the pump runs, the charger puts out 5 V. Two resistors cut that to 3.0 V for a Cardputer input pin. The Cardputer reads anything above about 2.5 V as on and below about 0.8 V as off. Its pins are damaged above 3.6 V, so never connect a charger straight to a pin. A cheap charger that runs high at 5.5 V with no load still gives only 3.3 V.
 
-| Pump | Pi input | Header pin |
-|---|---|---|
-| Boiler Pump | GPIO22 | 15 |
-| System Pump | GPIO23 | 16 |
-| DHW Pump | GPIO24 | 18 |
-| All three chargers' 0 V | Ground | 14 or 20 |
+### Wiring
 
-Wire each charger like this, with two 10k resistors:
+The inputs are on the Grove port, the small 4-pin socket on the Cardputer. A Grove cable with bare ends or a Grove breakout board makes the connections easy. Leave the red wire unconnected and tape it off. It is the Cardputer's own 5 V output.
+
+| Pump | Cardputer pin |
+|---|---|
+| System Pump | G1 |
+| DHW Pump | G2 |
+| Both chargers' 0 V | GND (black wire) |
+
+On M5Stack Grove cables the yellow wire is usually G2 and the white wire G1. Check this with the screen once the firmware is running, as described below.
+
+Wire each charger like this, with a 10k and a 15k resistor:
 
 ```
-charger +5 V ──[10k]──┬── GPIO pin
+charger +5 V ──[10k]──┬── G1 or G2
                       │
-                    [10k]
+                    [15k]
                       │
-charger 0 V ──────────┴── Pi ground
+charger 0 V ──────────┴── GND
 ```
 
 The bottom resistor also holds the pin at 0 V while the pump is off. The pump outputs are line voltage. Plug each charger into an outlet or cord wired to its pump output, and have someone qualified do that part. The chargers keep the low-voltage side separate from the mains. A charger can take up to a second to die away after its pump stops, so stop times may run slightly late.
 
-### Setting up the Pi
+Power the Cardputer from a separate USB-C charger and leave its power switch on. Its battery carries it through a short power cut.
 
-1. Use Raspberry Pi Imager to write Raspberry Pi OS Lite (32-bit) to a card. In its settings, set a host name, a user and password, and turn on SSH. The Pi 2 has no built-in Wi-Fi, so plug it into the network with a cable or use a USB Wi-Fi adapter.
-2. In your router, reserve a fixed address for the Pi so it doesn't change.
-3. From this folder, copy the two files across:
+### Flashing the firmware
 
-   ```sh
-   scp pi/pump_monitor.py pi/pump-monitor.service <user>@<pi-address>:
-   ```
+The firmware is in the `cardputer` folder. You build and flash it from a Mac or the Fedora box with PlatformIO, which uv runs without installing anything. Flashing replaces whatever the Cardputer came with. M5Stack's M5Burner app can put the original demo back later.
 
-4. On the Pi, install them and start the service:
+1. Copy `cardputer/include/wifi_config.example.h` to `cardputer/include/wifi_config.h` and fill in your Wi-Fi name and password. The Cardputer only joins 2.4 GHz networks. The new file stays out of git.
+2. Plug the Cardputer into the computer with a USB-C data cable and turn it on.
+3. Build and flash:
 
    ```sh
-   sudo mkdir -p /opt/pump-monitor
-   sudo cp pump_monitor.py /opt/pump-monitor/
-   sudo cp pump-monitor.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now pump-monitor
-   journalctl -u pump-monitor -f    # watch its log
+   cd cardputer
+   uvx platformio run -t upload
    ```
 
-The program needs gpiozero, which Pi OS Lite includes. If the log says it is missing, run `sudo apt install python3-gpiozero python3-lgpio`. The service starts at boot and restarts itself after a crash.
+   The first run downloads the ESP32 tools, a few hundred MB, and takes a few minutes. Later runs take seconds.
 
-Open `http://<pi-address>:8081/` in a browser. It shows each pump's state, how long it has been in that state, and the last 20 switches. Run a pump and reload to see it change. To use other pins or another port, edit `PUMPS` or `PORT` at the top of `pump_monitor.py` and restart the service.
+4. If the upload can't find the Cardputer, put it in download mode. Hold the G0 button, press and release the reset button on its side, then let go of G0. Run the upload again, then press reset once it finishes.
+5. To watch its log, run `uvx platformio device monitor` in the same folder. Press Ctrl+C to stop.
+
+After a restart the screen shows the Cardputer's address, each pump's state and how long it has been in that state. The bottom line says when heatmon last asked for data. In your router, reserve a fixed address for the Cardputer so it doesn't change. It names itself `pump-sensor` on the network.
+
+To check the wiring, run one pump and watch the screen. If the wrong pump turns on, swap the two signal wires, or swap the pin numbers near the top of `cardputer/src/main.cpp` and flash again. You can also open `http://<cardputer-address>:8081/` in a browser to see the same state and the last 20 switches.
 
 ### Turning it on in heatmon
 
-Open the gear button, enter the Pi's address under "Boiler pump sensor" and click "Test Pi". If it answers, switch on "Collect from the Pi" and save. No restart is needed. Heatmon asks the Pi for new switches every 5 seconds, set by `pumps_s` in `config.yaml`.
+Open the gear button, enter the Cardputer's address under "Boiler pump sensor" and click "Test sensor". If it answers, switch on "Collect from the sensor" and save. No restart is needed. Heatmon asks the Cardputer for new switches every 5 seconds, set by `pumps_s` in `config.yaml`.
 
 ### How it works
 
-The Pi checks its pins every 20 ms. A change counts once it has held for 0.2 seconds, and it is timed from when it first appeared. The Pi keeps the last 10,000 switches, numbered in order, so heatmon asks only for the ones it hasn't seen. A short network drop or a heatmon restart loses nothing. Times come from the Pi's uptime counter, not its clock. The Pi 2 has no clock battery, so this keeps times right even before it has set its clock after a power cut.
+The Cardputer checks its pins every 20 ms. A change counts once it has held for 0.2 seconds, and it is timed from when it first appeared. Pin reading runs apart from the web server, so a slow request never delays it. The Cardputer keeps the last 2,000 switches, numbered in order, so heatmon asks only for the ones it hasn't seen. A short network drop or a heatmon restart loses nothing. Times come from the Cardputer's uptime counter. It has no clock to set, and heatmon works out the real time of each switch.
 
-When the Pi is offline, heatmon backs off and tries less often, up to every 15 minutes, and the rest of the app carries on. The Status page shows the error, and the "data source sends nothing" alert covers the Pi while collection is on. If the Pi restarted or heatmon fell more than 10,000 switches behind, some switches are lost. Any pump that was running is then taken to have stopped when heatmon last heard from the Pi, unless the Pi says it has been running since before then. Runs with a guessed start or end are marked "contact lost, times are a guess". The Overview page shows pump states only while collection is on, and labels them "last known" when the Pi hasn't answered for a minute.
+The Cardputer rejoins Wi-Fi by itself after a drop. If its program ever stops running for 15 seconds, it restarts.
+
+When the Cardputer is offline, heatmon backs off and tries less often, up to every 15 minutes, and the rest of the app carries on. The Status page shows the error, and the "data source sends nothing" alert covers the sensor while collection is on. If the Cardputer restarted or heatmon fell more than 2,000 switches behind, some switches are lost. Any pump that was running is then taken to have stopped when heatmon last heard from the sensor, unless the sensor says it has been running since before then. Runs with a guessed start or end are marked "contact lost, times are a guess". The Overview page shows pump states only while collection is on, and labels them "last known" when the sensor hasn't answered for a minute.
 
 ### Hot water cost
 

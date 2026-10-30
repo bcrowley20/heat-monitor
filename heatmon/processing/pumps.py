@@ -15,7 +15,7 @@ class Run:
     pump: str
     start: datetime
     end: datetime
-    open: bool = False  # still running at the last contact with the Pi
+    open: bool = False  # still running at the last contact with the sensor
     gap: bool = False  # contact was lost, so the start or end time is a guess
 
     @property
@@ -25,7 +25,7 @@ class Run:
 
 def derive_runs(events: list[tuple[str, datetime, bool, bool]], until: datetime) -> list[Run]:
     """Events are (pump, time, on, gap) in time order. A run still on at the end lasts until
-    `until`, the last time the Pi was heard from."""
+    `until`, the last time the sensor was heard from."""
     started: dict[str, tuple[datetime, bool]] = {}
     runs = []
     for pump, ts, on, gap in events:
@@ -44,9 +44,9 @@ def gallons(minutes: float, input_btu_h: float) -> float:
 
 
 def daily_pumps(runs: list[Run], days: list[date], tz, input_btu_h: float,
-                price: float | None) -> list[dict]:
+                price: float | None, sensed: set[str]) -> list[dict]:
     """Minutes each pump ran per local day, plus hot water cycles, gallons and cost.
-    A cycle counts on the day it started."""
+    A cycle counts on the day it started. Pumps not in `sensed` get no minutes."""
     by_pump = defaultdict(list)
     for r in runs:
         by_pump[r.pump].append((r.start, r.end))
@@ -56,8 +56,8 @@ def daily_pumps(runs: list[Run], days: list[date], tz, input_btu_h: float,
         gal = gallons(dhw_min, input_btu_h)
         out.append({
             "date": d.isoformat(),
-            "boiler_pump_min": round(minutes_on_day(by_pump["boiler"], d, tz), 1),
-            "system_pump_min": round(minutes_on_day(by_pump["system"], d, tz), 1),
+            "boiler_pump_min": round(minutes_on_day(by_pump["boiler"], d, tz), 1) if "boiler" in sensed else None,
+            "system_pump_min": round(minutes_on_day(by_pump["system"], d, tz), 1) if "system" in sensed else None,
             "dhw_min": round(dhw_min, 1),
             "dhw_cycles": sum(1 for r in runs if r.pump == "dhw" and local_date(r.start, tz) == d),
             "dhw_gal_est": round(gal, 2),

@@ -528,12 +528,13 @@ def hot_water_daily(c: Ctx, rs: list[Run] | None = None) -> list[dict]:
         return []
     start = max(c.start, local_date(first, c.tz))
     days = [start + timedelta(days=i) for i in range((c.end - start).days + 1)]
-    return daily_pumps(runs(c) if rs is None else rs, days, c.tz, c.cfg.boiler.input_btu_h, price_per_gal(c))
+    return daily_pumps(runs(c) if rs is None else rs, days, c.tz, c.cfg.boiler.input_btu_h, price_per_gal(c),
+                       set(sensed_pumps(c)))
 
 
 def pumps_now(c: Ctx) -> list[dict]:
     """Each pump's latest state, for the Overview page. Empty while the sensor is turned off
-    or has never reported. `current` is False when the Pi hasn't answered for a minute."""
+    or has never reported. `current` is False when the sensor hasn't answered for a minute."""
     if not load_pump_settings(c.sessions).enabled:
         return []
     with c.sessions() as db:
@@ -542,6 +543,14 @@ def pumps_now(c: Ctx) -> list[dict]:
     current = seen is not None and datetime.now(UTC) - seen < PUMPS_STALE
     return [{"pump": name, "on": latest[p][0], "since": c.local(latest[p][1]), "current": current,
              "last_contact": c.local(seen)} for p, name in PUMP_NAMES.items() if p in latest]
+
+
+def sensed_pumps(c: Ctx) -> dict[str, str]:
+    """The pumps the sensor has ever reported, as name: label. The current sensor watches
+    only the System and DHW pumps."""
+    with c.sessions() as db:
+        seen = set(db.scalars(select(PumpEvent.pump).distinct()))
+    return {p: n for p, n in PUMP_NAMES.items() if p in seen}
 
 
 def has_pump_data(c: Ctx) -> bool:

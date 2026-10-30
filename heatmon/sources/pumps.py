@@ -1,8 +1,8 @@
-"""Boiler pump sensor: reads pump switches from the Raspberry Pi running pi/pump_monitor.py.
+"""Boiler pump sensor: reads pump switches from the Cardputer running cardputer/src/main.cpp.
 
-The Pi times each switch with its own monotonic clock. Each reply also gives the Pi's
-clock reading at that moment, so a switch happened (Pi now - switch time) before the
-reply arrived. The Pi's wall clock is never used.
+The code calls it "the Pi", after the first sensor. The Pi times each switch with its own
+monotonic clock. Each reply also gives the Pi's clock reading at that moment, so a switch
+happened (Pi now - switch time) before the reply arrived. The Pi's wall clock is never used.
 """
 
 import logging
@@ -143,7 +143,7 @@ class PumpSource:
             # Switches were lost. A running pump is taken to have stopped when we last heard
             # from the Pi, unless the Pi says it has been on since before then. The current
             # state below starts it again if it is still on.
-            log.warning("Pump sensor: %s; marking a gap", "the Pi restarted" if restarted else "missed switches")
+            log.warning("Pump sensor: %s; marking a gap", "the sensor restarted" if restarted else "missed switches")
             for p, on in list(state.items()):
                 cur = reply.pumps.get(p)
                 if on and not (cur and cur.on and at(cur.since_mono) <= link.last_contact):

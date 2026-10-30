@@ -5,3 +5,5 @@ __pycache__/
 config.yaml
 data/
 .nicegui/
+cardputer/.pio/
+cardputer/include/wifi_config.h

@@ -127,8 +127,9 @@ def test_daily_pumps_split_at_midnight(cfg):
     tz = data.ZoneInfo(cfg.timezone)
     start = datetime(2026, 11, 2, 23, 50, tzinfo=tz)
     runs = [Run("dhw", start, start + timedelta(minutes=20)), Run("boiler", start, start + timedelta(minutes=20))]
-    days = daily_pumps(runs, [date(2026, 11, 2), date(2026, 11, 3)], tz, 91_500, 2.0)
-    assert [(d["dhw_min"], d["dhw_cycles"], d["boiler_pump_min"]) for d in days] == [(10, 1, 10), (10, 0, 10)]
+    days = daily_pumps(runs, [date(2026, 11, 2), date(2026, 11, 3)], tz, 91_500, 2.0, {"dhw", "boiler"})
+    assert [(d["dhw_min"], d["dhw_cycles"], d["boiler_pump_min"], d["system_pump_min"]) for d in days] == [
+        (10, 1, 10, None), (10, 0, 10, None)]
     assert days[0]["dhw_gal_est"] == round(10 / 60, 2) and days[0]["dhw_cost_est"] == round(10 / 60 * 2, 2)
 
 
