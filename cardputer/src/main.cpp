@@ -11,14 +11,21 @@
 // when it was first seen. Times are seconds since boot, so no clock needs setting.
 // The screen shows each pump, the voltage on its pin, the network address and when
 // heatmon last asked.
+//
+// After the first USB flash, updates can go over Wi-Fi (see platformio.ini), protected
+// by OTA_PASSWORD from wifi_config.h.
 
+#include <ArduinoOTA.h>
 #include <M5Cardputer.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <driver/rtc_io.h>
 #include <esp_task_wdt.h>
 
-#include "wifi_config.h"  // WIFI_SSID and WIFI_PASSWORD; copy wifi_config.example.h
+#include "wifi_config.h"  // WIFI_SSID, WIFI_PASSWORD and OTA_PASSWORD; copy wifi_config.example.h
+#ifndef OTA_PASSWORD
+#error "Add OTA_PASSWORD to include/wifi_config.h (see wifi_config.example.h)"
+#endif
 
 struct Pump {
   const char *name;   // the name heatmon knows the pump by
@@ -36,7 +43,7 @@ const int N_PUMPS = sizeof(pumps) / sizeof(pumps[0]);
 
 const int PORT = 8081;
 const int SAMPLE_MS = 20;
-const int64_t SETTLE_US = 200000;
+const int64_t SETTLE_US = 3000000;  // no real pump run is this short; shorter blips are ignored
 const uint32_t MAX_EVENTS = 2000;  // switches kept; heatmon notices if it falls further behind
 const uint32_t PAGE = 200;         // switches per /events reply
 const uint32_t RECENT = 20;        // switches shown at /
@@ -278,6 +285,12 @@ void setup() {
   server.onNotFound([] { server.send(404, "text/plain", "not found"); });
   server.begin();
 
+  ArduinoOTA.setHostname("pump-sensor");
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+  // Receiving an update blocks loop() for longer than the watchdog allows.
+  ArduinoOTA.onStart([] { disableLoopWDT(); });
+  ArduinoOTA.onError([](ota_error_t) { enableLoopWDT(); });
+
   // If either the pin reader or the web server hangs, restart rather than serve a frozen state.
   esp_task_wdt_init(WATCHDOG_S, true);
   enableLoopWDT();
@@ -287,12 +300,18 @@ void setup() {
 
 void loop() {
   static int64_t last_draw = 0, last_online = 0;
+  static bool ota_started = false;
   server.handleClient();
+  if (ota_started) ArduinoOTA.handle();
   int64_t now = now_us();
   // Auto-reconnect handles most drops. This catches the rare case where it gives up,
   // and waits long enough never to cut off a join that is still going.
   if (WiFi.status() == WL_CONNECTED) {
     last_online = now;
+    if (!ota_started) {
+      ArduinoOTA.begin();  // needs the network up
+      ota_started = true;
+    }
   } else if (now - last_online > WIFI_RESTART_US) {
     WiFi.disconnect();
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);

@@ -156,7 +156,7 @@ Power the Cardputer from a separate USB-C charger and leave its power switch on.
 
 The firmware is in the `cardputer` folder. You build and flash it from a Mac or the Fedora box with PlatformIO, which uv runs without installing anything. Flashing replaces whatever the Cardputer came with. M5Stack's M5Burner app can put the original demo back later.
 
-1. Copy `cardputer/include/wifi_config.example.h` to `cardputer/include/wifi_config.h` and fill in your Wi-Fi name and password. The Cardputer only joins 2.4 GHz networks. The new file stays out of git.
+1. Copy `cardputer/include/wifi_config.example.h` to `cardputer/include/wifi_config.h` and fill in your Wi-Fi name and password. The Cardputer only joins 2.4 GHz networks. Also pick an update password for `OTA_PASSWORD`. The new file stays out of git.
 2. Plug the Cardputer into the computer with a USB-C data cable and turn it on.
 3. Build and flash:
 
@@ -170,6 +170,15 @@ The firmware is in the `cardputer` folder. You build and flash it from a Mac or 
 4. If the upload can't find the Cardputer, put it in download mode. Hold the G0 button, press and release the reset button on its side, then let go of G0. Run the upload again, then press reset once it finishes.
 5. To watch its log, run `uvx platformio device monitor` in the same folder. Press Ctrl+C to stop.
 
+After this first USB flash, you can send updates over Wi-Fi with no cable. Use the update password from `wifi_config.h`:
+
+```sh
+cd cardputer
+PUMP_OTA_PASSWORD='your update password' uvx platformio run -e cardputer-ota -t upload
+```
+
+This finds the Cardputer by its network name, `pump-sensor.local`. If that fails, add `--upload-port` followed by its IP address. The Cardputer restarts after an update, so heatmon shows a short gap in the pump runs.
+
 After a restart the screen shows the Cardputer's address, each pump's state, how long it has been in that state and the voltage on its pin. The voltage reading tops out at about 3.1 V. The bottom line says when heatmon last asked for data. In your router, reserve a fixed address for the Cardputer so it doesn't change. It names itself `pump-sensor` on the network.
 
 To check the wiring, run one pump and watch the screen. If the wrong pump turns on, swap the two signal wires, or swap the pin numbers near the top of `cardputer/src/main.cpp` and flash again. You can also open `http://<cardputer-address>:8081/` in a browser to see the same state and the last 20 switches.
@@ -180,7 +189,7 @@ Open the gear button, enter the Cardputer's address under "Boiler pump sensor" a
 
 ### How it works
 
-The Cardputer checks its pins every 20 ms. A change counts once it has held for 0.2 seconds, and it is timed from when it first appeared. Pin reading runs apart from the web server, so a slow request never delays it. The Cardputer keeps the last 2,000 switches, numbered in order, so heatmon asks only for the ones it hasn't seen. A short network drop or a heatmon restart loses nothing. Times come from the Cardputer's uptime counter. It has no clock to set, and heatmon works out the real time of each switch.
+The Cardputer checks its pins every 20 ms. A change counts once it has held for 3 seconds, so brief flickers when a pump starts or stops are ignored. It is still timed from when it first appeared. Pin reading runs apart from the web server, so a slow request never delays it. The Cardputer keeps the last 2,000 switches, numbered in order, so heatmon asks only for the ones it hasn't seen. A short network drop or a heatmon restart loses nothing. Times come from the Cardputer's uptime counter. It has no clock to set, and heatmon works out the real time of each switch.
 
 The Cardputer rejoins Wi-Fi by itself after a drop. If its program ever stops running for 15 seconds, it restarts.
 
