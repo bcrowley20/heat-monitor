@@ -53,6 +53,19 @@ char boot_id[17];
 WebServer server(PORT);
 M5Canvas canvas(&M5Cardputer.Display);
 int64_t last_asked = -1;  // when heatmon last asked for switches
+volatile uint8_t wifi_reason = 0;  // why the last Wi-Fi attempt failed, 0 if none yet
+
+const char *wifi_problem(uint8_t reason) {
+  switch (reason) {
+    case WIFI_REASON_NO_AP_FOUND: return "network not found (2.4 GHz on?)";
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "wrong password?";
+    case WIFI_REASON_AUTH_EXPIRE:
+    case WIFI_REASON_ASSOC_FAIL: return "router refused to connect";
+    default: return nullptr;
+  }
+}
 
 int64_t now_us() { return esp_timer_get_time(); }
 
@@ -183,6 +196,13 @@ void draw() {
   canvas.setCursor(4, 4);
   if (WiFi.status() == WL_CONNECTED) canvas.printf("%s:%d", WiFi.localIP().toString().c_str(), PORT);
   else canvas.printf("Wi-Fi: connecting to %s", WIFI_SSID);
+  if (WiFi.status() != WL_CONNECTED && wifi_reason) {
+    const char *why = wifi_problem(wifi_reason);
+    canvas.setCursor(4, 13);
+    canvas.setTextColor(TFT_ORANGE);
+    if (why) canvas.printf("failed: %s (%d)", why, wifi_reason);
+    else canvas.printf("failed: reason %d", wifi_reason);
+  }
 
   for (int i = 0; i < N_PUMPS; i++) {
     int y = 24 + i * 44;
@@ -207,11 +227,13 @@ void draw() {
 
 void setup() {
   auto cfg = M5.config();
+  cfg.external_display_value = 0;  // don't probe the Grove port for add-on screens; it holds the pump pins
   M5Cardputer.begin(cfg, false);  // no keyboard; the pump pins need nothing else
   M5Cardputer.Display.setBrightness(60);
   canvas.createSprite(M5Cardputer.Display.width(), M5Cardputer.Display.height());
 
-  // No pull-up or pull-down: the divider's bottom resistor holds the pin low when a pump is off.
+  // INPUT turns off the chip's own pull-up and pull-down. The divider's bottom resistor
+  // holds the pin low when a pump is off.
   for (auto &p : pumps) pinMode(p.pin, INPUT);
   lock = xSemaphoreCreateMutex();
   int64_t now = now_us();
@@ -221,6 +243,10 @@ void setup() {
     add_event(i, pumps[i].on, now, true);
   }
 
+  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+    wifi_reason = info.wifi_sta_disconnected.reason;
+    Serial.printf("Wi-Fi failed, reason %d\n", wifi_reason);
+  }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.setHostname("pump-sensor");
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);  // answer quickly instead of saving power
