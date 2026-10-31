@@ -235,8 +235,8 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                      + (f", average overshoot {sum(overs) / len(overs):.1f}°F" if overs else ""))
             chart(title, traces, _with_events(lay, events))
         table("Calls for heat (overshoot: highest °F above setpoint in the 6 hours after a call)",
-              calls, "zone_calls", c.start, c.end)
-        table("Events", events, "events", c.start, c.end, 5)
+              sorted(calls, key=lambda k: k["start"], reverse=True), "zone_calls", c.start, c.end)
+        table("Events", events[::-1], "events", c.start, c.end, 5)
 
     @ui.page("/runtime", title="Runtime · Heating Monitor")
     def runtime(start: str | None = None, end: str | None = None):
@@ -280,7 +280,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                                events))
         keep = ["date", "hdd", "any_zone_call_min", "total_zone_call_min", "zone_calls", "runtime_source"]
         keep += [f"{z} {kind}" for z in names for kind in ("min", "calls")]
-        table("Daily runtime", [{k: d[k] for k in keep} for d in days], "daily", c.start, c.end)
+        table("Daily runtime", [{k: d[k] for k in keep} for d in days[::-1]], "daily", c.start, c.end)
 
     @ui.page("/propane", title="Propane · Heating Monitor")
     def propane(start: str | None = None, end: str | None = None):
@@ -321,7 +321,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
             ui.label(n).classes("text-sm text-gray-700")
         ui.label("Daily gallons are rough: the tank reports in whole percents. Weekly totals are more reliable.") \
             .classes("text-sm text-gray-500")
-        table("By week", weeks, "weekly_propane", c.start, c.end)
+        table("By week", weeks[::-1], "weekly_propane", c.start, c.end)
 
         ib = data.invoice_baseline(c)
         fit = ib.fit
@@ -336,11 +336,11 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                          "page) and the weather backfill covers their dates.").classes("text-sm text-gray-500")
         if fit:
             table("Invoice usage by heating season (October to April), spread over days by the fitted line",
-                  data.baseline_seasons(c, ib), "baseline_seasons", rows_per_page=0)
-            table("Usage between invoiced deliveries", data.delivery_intervals(c, ib), "delivery_intervals",
+                  data.baseline_seasons(c, ib)[::-1], "baseline_seasons", rows_per_page=0)
+            table("Usage between invoiced deliveries", data.delivery_intervals(c, ib)[::-1], "delivery_intervals",
                   rows_per_page=0)
-        table("Fills", fills, "deliveries", c.start, c.end, 5)
-        table("Tank readings", readings, "tank", c.start, c.end)
+        table("Fills", fills[::-1], "deliveries", c.start, c.end, 5)
+        table("Tank readings", readings[::-1], "tank", c.start, c.end)
 
     @ui.page("/weather", title="Weather · Heating Monitor")
     def weather(start: str | None = None, end: str | None = None):
@@ -367,7 +367,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
              "line": {"color": SERIES[1], "width": 1.5}}], _with_events(layout(260), events))
         keep = ("date", "hdd", "mean_temp_f", "min_temp_f", "max_temp_f", "solar_kwh_m2", "weather_hours",
                 "open_meteo_hours")
-        table("Daily weather", [{k: d[k] for k in keep} for d in data.daily(c)], "daily", c.start, c.end)
+        table("Daily weather", [{k: d[k] for k in keep} for d in data.daily(c)[::-1]], "daily", c.start, c.end)
 
     @ui.page("/hotwater", title="Hot water · Heating Monitor")
     def hotwater(start: str | None = None, end: str | None = None):
@@ -427,5 +427,5 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
             _with_events(layout(260, showlegend=False, hovermode="closest",
                                 yaxis={"title": {"text": "minutes"}, "rangemode": "tozero"}), events))
 
-        table("Hot water and pumps by day", days, "hot_water_daily", c.start, c.end)
-        table("Pump runs", data.pump_runs(c, rs), "pump_runs", c.start, c.end)
+        table("Hot water and pumps by day", days[::-1], "hot_water_daily", c.start, c.end)
+        table("Pump runs", data.pump_runs(c, rs)[::-1], "pump_runs", c.start, c.end)
