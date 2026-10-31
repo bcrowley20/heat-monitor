@@ -5,14 +5,17 @@
 //     GET /                          current state and the last 20 switches
 //     GET /events?after=N&boot=ID    switches numbered above N (what heatmon uses)
 //
-// Each pump's 5 V USB adapter feeds its pin through a 10k/15k divider, so a running pump
-// reads high. A change counts only after it has held for SETTLE_US, and it is timed from
+// Each pump's 5 V USB adapter feeds its pin through a 1k / 1.5k divider, so a running pump
+// reads high. The Cardputer has a 10k I2C pull-up to 3.3 V on G1 and G2, which is why the
+// resistors are so small: the 1.5k must hold an idle pin near 0 V against it. A change counts only after it has held for SETTLE_US, and it is timed from
 // when it was first seen. Times are seconds since boot, so no clock needs setting.
-// The screen shows each pump, the network address and when heatmon last asked.
+// The screen shows each pump, the voltage on its pin, the network address and when
+// heatmon last asked.
 
 #include <M5Cardputer.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <driver/rtc_io.h>
 #include <esp_task_wdt.h>
 
 #include "wifi_config.h"  // WIFI_SSID and WIFI_PASSWORD; copy wifi_config.example.h
@@ -77,6 +80,15 @@ void add_event(int pump, bool on, int64_t at, bool start) {
 }
 
 bool read_pin(const Pump &p) { return digitalRead(p.pin) == HIGH; }
+
+// A plain input with no pull resistors. pinMode only turns off the digital pull-ups, but
+// G1 and G2 also have low-power (RTC) pull-ups that start out on, so turn those off too.
+// The divider's bottom resistor holds the pin low when a pump is off.
+void set_input(int pin) {
+  pinMode(pin, INPUT);
+  rtc_gpio_pullup_dis((gpio_num_t)pin);
+  rtc_gpio_pulldown_dis((gpio_num_t)pin);
+}
 
 void sample() {
   int64_t now = now_us();
@@ -185,8 +197,15 @@ String how_long(int64_t us) {
 
 void draw() {
   Pump shown[N_PUMPS];
+  uint32_t mv[N_PUMPS];
   xSemaphoreTake(lock, portMAX_DELAY);
-  for (int i = 0; i < N_PUMPS; i++) shown[i] = pumps[i];
+  for (int i = 0; i < N_PUMPS; i++) {
+    shown[i] = pumps[i];
+    // An analog read takes the pin out of digital mode, so put it back while the
+    // sampler is still waiting on the lock. Readings top out at about 3.1 V.
+    mv[i] = analogReadMilliVolts(pumps[i].pin);
+    set_input(pumps[i].pin);
+  }
   xSemaphoreGive(lock);
   int64_t now = now_us();
 
@@ -217,6 +236,8 @@ void draw() {
     canvas.setTextColor(TFT_LIGHTGREY);
     canvas.setCursor(4, y + 26);
     canvas.printf("for %s", how_long(now - shown[i].since).c_str());
+    canvas.setCursor(140, y + 26);
+    canvas.printf("G%d: %.2f V", shown[i].pin, mv[i] / 1000.0);
   }
 
   canvas.setCursor(4, 122);
@@ -232,9 +253,7 @@ void setup() {
   M5Cardputer.Display.setBrightness(60);
   canvas.createSprite(M5Cardputer.Display.width(), M5Cardputer.Display.height());
 
-  // INPUT turns off the chip's own pull-up and pull-down. The divider's bottom resistor
-  // holds the pin low when a pump is off.
-  for (auto &p : pumps) pinMode(p.pin, INPUT);
+  for (auto &p : pumps) set_input(p.pin);
   lock = xSemaphoreCreateMutex();
   int64_t now = now_us();
   for (int i = 0; i < N_PUMPS; i++) {

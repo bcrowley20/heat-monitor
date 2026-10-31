@@ -71,7 +71,7 @@ The scatter charts split days into settings periods. Each setting change starts 
 
 **Compare** puts two periods side by side. Pick "before and after an event" to compare the days before a setting change with the days after it; the day of the change is left out of both. Or pick any two date ranges. It shows propane and calling time per degree day for each period, how each period did against the invoice baseline, and a short written summary that ends with how much to trust the result. Days with a fireplace or away event are left out unless you tick the box to include them.
 
-**Events & settings** is where you add, edit and delete events, keep dated snapshots of the boiler's settings (and see what changed between two of them), and import propane invoices.
+**Events & settings** is where you add, edit and delete events, keep dated snapshots of the boiler's settings (and see what changed between two of them), and import propane invoices. Its Pump history table lists every System and DHW pump run from the last 30 days, newest first. It shows 15 rows at a time and scrolls for the rest.
 
 ## Propane invoices and the baseline
 
@@ -123,6 +123,8 @@ An M5Stack Cardputer on the home network watches two of the boiler's pump output
 
 Each pump output powers a plain 5 V USB phone charger. When the pump runs, the charger puts out 5 V. Two resistors cut that to 3.0 V for a Cardputer input pin. The Cardputer reads anything above about 2.5 V as on and below about 0.8 V as off. Its pins are damaged above 3.6 V, so never connect a charger straight to a pin. A cheap charger that runs high at 5.5 V with no load still gives only 3.3 V.
 
+The Cardputer's circuit board has a 10k resistor from G1 and from G2 up to 3.3 V, for using the Grove port as an I2C bus. They can't be reached to remove, and software can't turn them off. That is why the resistors below are small: the bottom one has to hold an idle pin near 0 V against that 10k. With 10k and 15k resistors, an idle pump sat at 1.3 V to 2 V and showed random runs. With the values below, an idle pump stays under 0.5 V. A running pump reads 2.9 V to 3.3 V for a charger putting out anywhere from 4.75 V to 5.5 V. Each charger supplies about 2 mA.
+
 ### Wiring
 
 The inputs are on the Grove port, the small 4-pin socket on the Cardputer. A Grove cable with bare ends or a Grove breakout board makes the connections easy. Leave the red wire unconnected and tape it off. It is the Cardputer's own 5 V output.
@@ -135,17 +137,18 @@ The inputs are on the Grove port, the small 4-pin socket on the Cardputer. A Gro
 
 On M5Stack Grove cables the yellow wire is usually G2 and the white wire G1. Check this with the screen once the firmware is running, as described below.
 
-Wire each charger like this, with a 10k and a 15k resistor:
+Wire each charger like this. The bottom resistor is a 2.2k and a 4.7k side by side, which makes 1.5k:
 
 ```
-charger +5 V ──[10k]──┬── G1 or G2
-                      │
-                    [15k]
-                      │
-charger 0 V ──────────┴── GND
+charger +5 V ──[1k]────┬───────── G1 or G2
+                       │
+                 ┌─────┴─────┐
+               [2.2k]      [4.7k]
+                 └─────┬─────┘
+charger 0 V ───────────┴───────── GND
 ```
 
-The bottom resistor also holds the pin at 0 V while the pump is off. The pump outputs are line voltage. Plug each charger into an outlet or cord wired to its pump output, and have someone qualified do that part. The chargers keep the low-voltage side separate from the mains. A charger can take up to a second to die away after its pump stops, so stop times may run slightly late.
+The pump outputs are line voltage. Plug each charger into an outlet or cord wired to its pump output, and have someone qualified do that part. The chargers keep the low-voltage side separate from the mains. A charger can take up to a second to die away after its pump stops, so stop times may run slightly late.
 
 Power the Cardputer from a separate USB-C charger and leave its power switch on. Its battery carries it through a short power cut.
 
@@ -167,7 +170,7 @@ The firmware is in the `cardputer` folder. You build and flash it from a Mac or 
 4. If the upload can't find the Cardputer, put it in download mode. Hold the G0 button, press and release the reset button on its side, then let go of G0. Run the upload again, then press reset once it finishes.
 5. To watch its log, run `uvx platformio device monitor` in the same folder. Press Ctrl+C to stop.
 
-After a restart the screen shows the Cardputer's address, each pump's state and how long it has been in that state. The bottom line says when heatmon last asked for data. In your router, reserve a fixed address for the Cardputer so it doesn't change. It names itself `pump-sensor` on the network.
+After a restart the screen shows the Cardputer's address, each pump's state, how long it has been in that state and the voltage on its pin. The voltage reading tops out at about 3.1 V. The bottom line says when heatmon last asked for data. In your router, reserve a fixed address for the Cardputer so it doesn't change. It names itself `pump-sensor` on the network.
 
 To check the wiring, run one pump and watch the screen. If the wrong pump turns on, swap the two signal wires, or swap the pin numbers near the top of `cardputer/src/main.cpp` and flash again. You can also open `http://<cardputer-address>:8081/` in a browser to see the same state and the last 20 switches.
 

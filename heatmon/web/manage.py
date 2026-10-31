@@ -1,7 +1,7 @@
-"""Events and settings page: events, boiler settings snapshots and propane invoices."""
+"""Events and settings page: events, boiler settings snapshots, propane invoices and pump history."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from nicegui import events as ui_events
@@ -12,7 +12,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from heatmon import records
 from heatmon.config import Config
 from heatmon.db.models import BoilerSettingsSnapshot, Event, PropaneDelivery
+from heatmon.web import data
 from heatmon.web.components import CARD, frame, table
+
+PUMP_HISTORY_DAYS = 30
+PUMP_COLUMNS = [("pump", "Pump"), ("start", "Started"), ("end", "Stopped"), ("minutes", "Minutes"), ("note", "Note")]
 
 
 def _confirm(message: str, action) -> None:
@@ -243,3 +247,23 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                         else:
                             ui.label("")  # detected fills are rebuilt from tank readings
             invoice_list()
+
+        # ---------- pump history ----------
+        today = datetime.now(tz).date()
+        c = data.Ctx(cfg, sessions, today - timedelta(days=PUMP_HISTORY_DAYS - 1), today)
+        with ui.card().classes(CARD + " w-full"):
+            with ui.row().classes("w-full items-center justify-between"):
+                ui.label("Pump history").classes("text-sm font-semibold")
+                ui.link("Download CSV", f"/api/pump_runs.csv?start={c.start}&end={c.end}").classes("text-sm")
+            ui.label(f"Every System and DHW pump run from the pump sensor in the last {PUMP_HISTORY_DAYS} days, "
+                     "newest first.").classes("text-xs text-gray-500")
+            rows = data.pump_runs(c)[::-1]
+            if not rows:
+                ui.label("No pump runs yet.").classes("text-sm text-gray-500")
+            else:
+                # Room for 15 rows, then the table scrolls under a header that stays put.
+                ui.add_css(".pump-history thead tr th { position: sticky; top: 0; z-index: 1; background: white; }")
+                cols = [{"name": k, "label": label, "field": k, "align": "left", "sortable": True}
+                        for k, label in PUMP_COLUMNS]
+                ui.table(columns=cols, rows=rows, pagination=0).props("dense flat virtual-scroll hide-bottom") \
+                    .classes("w-full pump-history").style("max-height: 470px")
