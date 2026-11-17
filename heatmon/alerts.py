@@ -5,7 +5,9 @@ the alerts table, which the web pages also read to show popups.
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from statistics import median
+from zoneinfo import ZoneInfo
 
 import httpx
 from pydantic import BaseModel, Field
@@ -13,10 +15,15 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
-from heatmon.db.models import Alert, SourceStatus, TankReading, ThermostatReading, Zone
+from heatmon.db.models import (Alert, BoilerCounters, BoilerCycle, BoilerParams, BoilerSample, DailySummary, Event,
+                               SourceStatus, TankReading, ThermostatReading, Zone)
 from heatmon.db.session import read_setting, write_setting
 from heatmon.logs import scrub
+from heatmon.processing import boiler as bp
+from heatmon.processing.days import day_bounds
+from heatmon.sources.boiler import load_settings as load_boiler_settings
 from heatmon.sources.pumps import load_settings as load_pump_settings
+from heatmon.web.data import fit_line
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +34,19 @@ COVERAGE_SLACK = timedelta(minutes=10)
 # An open tank alert clears only once the level is this many points above the limit, so
 # readings that wobble around the limit don't alert over and over.
 TANK_CLEAR_MARGIN_PCT = 2
+SHORT_CYCLE_WINDOW = timedelta(hours=2)
+# Minutes a boiler reading must stay out of line before it alerts.
+STATE_MIN, SLAB_MIN, RETURN_MIN, TANK_MIN = 3, 5, 30, 45
+FULL_DAY_SAMPLES = 1200  # of 1440 minutes; days with less boiler data aren't compared
+RUNTIME_FIT_DAYS = 14  # full days needed in the current settings period before comparing runtime
+RUNTIME_MIN_EXTRA_H = 1
+DHW_MEDIAN_DAYS, DHW_MIN_DAYS = 14, 7
+# Alert kind -> the setting that turns it on.
+BOILER_KINDS = {"boiler_short": "boiler_short_on", "boiler_ignition": "boiler_ignition_on",
+                "boiler_state": "boiler_state_on", "boiler_slab": "boiler_slab_on",
+                "boiler_return": "boiler_return_on", "boiler_tank": "boiler_tank_on",
+                "boiler_runtime": "boiler_runtime_on", "boiler_dhw": "boiler_dhw_jump_on",
+                "boiler_settings": "boiler_settings_on"}
 
 
 class AlertSettings(BaseModel):
@@ -40,6 +60,22 @@ class AlertSettings(BaseModel):
     room_cold_on: bool = True
     room_cold_f: float = Field(2, gt=0)
     room_cold_hours: float = Field(2, gt=0)
+    boiler_short_on: bool = True
+    boiler_short_count: int = Field(3, ge=1)
+    boiler_short_min: float = Field(10, gt=0)
+    boiler_ignition_on: bool = True
+    boiler_state_on: bool = True
+    boiler_slab_on: bool = True
+    boiler_slab_f: float = Field(120, gt=0)
+    boiler_return_on: bool = True
+    boiler_return_f: float = Field(130, gt=0)
+    boiler_tank_on: bool = True
+    boiler_tank_f: float = Field(105, gt=0)
+    boiler_runtime_on: bool = True
+    boiler_runtime_pct: float = Field(30, gt=0)
+    boiler_dhw_jump_on: bool = True
+    boiler_dhw_jump_x: float = Field(2, gt=1)
+    boiler_settings_on: bool = True
 
 
 def load_settings(sessions: sessionmaker[Session]) -> AlertSettings:
@@ -98,6 +134,109 @@ def conditions(sessions: sessionmaker[Session], s: AlertSettings, now: datetime,
     return found
 
 
+def _sustained(db: Session, now: datetime, minutes: int, ok) -> bool:
+    """Whether every boiler minute in the last `minutes` passes `ok`, with none missing."""
+    rows = db.scalars(select(BoilerSample).where(BoilerSample.ts >= now - timedelta(minutes=minutes + 1),
+                                                 BoilerSample.ts <= now)
+                      .order_by(BoilerSample.ts)).all()
+    return (len(rows) >= minutes and rows[0].ts <= now - timedelta(minutes=minutes - 1)
+            and all(ok(r) for r in rows))
+
+
+def boiler_conditions(sessions: sessionmaker[Session], s: AlertSettings, now: datetime,
+                      tz: ZoneInfo) -> dict[tuple[str, str], str]:
+    """Boiler problems visible in the last few hours. The day-by-day checks are in boiler_day_conditions."""
+    found: dict[tuple[str, str], str] = {}
+
+    def local(ts: datetime) -> str:
+        return ts.astimezone(tz).strftime("%b %-d %H:%M")
+
+    with sessions() as db:
+        if s.boiler_short_on:
+            short = [c for c in db.scalars(select(BoilerCycle).where(BoilerCycle.start_ts >= now - SHORT_CYCLE_WINDOW))
+                     if bp.is_short(c, s.boiler_short_min)]
+            if len(short) >= s.boiler_short_count:
+                found["boiler_short", "boiler"] = (
+                    f"Boiler is short cycling: {len(short)} heating burns under {s.boiler_short_min:g} minutes in "
+                    f"the last 2 hours stopped on setpoint met while a zone was still calling.")
+        if s.boiler_ignition_on:
+            rows = db.scalars(select(BoilerCounters).where(BoilerCounters.ts >= now - timedelta(hours=24))
+                              .order_by(BoilerCounters.ts)).all()
+            if rows:
+                failed = ((rows[-1].burner_starts - rows[-1].ignitions) - (rows[0].burner_starts - rows[0].ignitions))
+                if failed > 0:
+                    found["boiler_ignition", "boiler"] = (
+                        f"The boiler's counters show {failed} burner start{'s' if failed > 1 else ''} without a "
+                        "successful ignition in the last 24 hours.")
+        if s.boiler_state_on and _sustained(db, now, STATE_MIN, lambda r: r.state not in bp.STATES):
+            code = db.scalar(select(BoilerSample.state).order_by(BoilerSample.ts.desc()).limit(1))
+            found["boiler_state", "boiler"] = (f"The boiler has been in an unfamiliar burner state (code {code}) for "
+                                               f"{STATE_MIN} minutes. It may be locked out; check its display.")
+        if s.boiler_slab_on and _sustained(db, now, SLAB_MIN, lambda r: r.mode == "sh" and r.system_f is not None
+                                           and r.system_f > s.boiler_slab_f):
+            found["boiler_slab", "boiler"] = (f"Heating supply water has been above {s.boiler_slab_f:g}°F for "
+                                              f"{SLAB_MIN} minutes. The slab has no other protection.")
+        if s.boiler_return_on and _sustained(db, now, RETURN_MIN, lambda r: r.mode == "sh" and r.flame_s > 0
+                                             and r.inlet_f is not None and r.inlet_f > s.boiler_return_f):
+            found["boiler_return", "boiler"] = (f"Return water has been above {s.boiler_return_f:g}°F for "
+                                                f"{RETURN_MIN} minutes of heating, so the boiler isn't condensing.")
+        if s.boiler_tank_on and _sustained(db, now, TANK_MIN, lambda r: r.tank_f is not None
+                                           and r.dhw_setpoint_f is not None and r.dhw_setpoint_f > s.boiler_tank_f
+                                           and r.tank_f < s.boiler_tank_f):
+            found["boiler_tank", "boiler"] = (f"The hot water tank has been below {s.boiler_tank_f:g}°F for "
+                                              f"{TANK_MIN} minutes and isn't recovering.")
+        if s.boiler_settings_on:
+            recent = db.scalars(select(BoilerParams).where(BoilerParams.ts >= now - timedelta(hours=24))
+                                .order_by(BoilerParams.ts.desc())).first()
+            if recent and db.scalar(select(BoilerParams.ts).where(BoilerParams.ts < recent.ts).limit(1)):
+                found["boiler_settings", "boiler"] = (
+                    f"Boiler settings changed around {local(recent.ts)}. The change is listed on the Boiler page.")
+    return found
+
+
+def boiler_day_conditions(sessions: sessionmaker[Session], s: AlertSettings, day: date,
+                          tz: ZoneInfo) -> dict[tuple[str, str], str]:
+    """Compare one finished day's burner time with the days before it."""
+    found: dict[tuple[str, str], str] = {}
+    lo, hi = day_bounds(day, tz)
+    with sessions() as db:
+        period = db.scalar(select(Event.ts).where(Event.type == "setting_change", Event.ts < lo)
+                           .order_by(Event.ts.desc()).limit(1))
+        since = max(period or lo - timedelta(days=60), lo - timedelta(days=60))
+        samples = db.scalars(select(BoilerSample).where(BoilerSample.ts >= since, BoilerSample.ts < hi)).all()
+        cycles = db.scalars(select(BoilerCycle).where(BoilerCycle.start_ts >= since, BoilerCycle.start_ts < hi)).all()
+        hdd = {r.date: r.hdd for r in db.scalars(select(DailySummary).where(DailySummary.date >= since.date()))}
+    counts: dict[date, int] = {}
+    for r in samples:
+        d = r.ts.astimezone(tz).date()
+        counts[d] = counts.get(d, 0) + 1
+    totals = bp.daily_totals(samples, cycles, tz)
+    full = {d: t for d, t in totals.items() if counts.get(d, 0) >= FULL_DAY_SAMPLES
+            and (period is None or d > period.astimezone(tz).date())}
+    today = full.pop(day, None)
+    if today is None:
+        return found
+    if s.boiler_runtime_on and hdd.get(day) is not None:
+        pts = [(hdd[d], t["sh_burn_h"]) for d, t in full.items() if hdd.get(d) is not None]
+        if len(pts) >= RUNTIME_FIT_DAYS:
+            fit = fit_line([p[0] for p in pts], [p[1] for p in pts])
+            if fit:
+                expected = max(0.0, fit.intercept + fit.slope * hdd[day])
+                actual = today["sh_burn_h"]
+                if actual > expected * (1 + s.boiler_runtime_pct / 100) and actual - expected > RUNTIME_MIN_EXTRA_H:
+                    found["boiler_runtime", "boiler"] = (
+                        f"On {day:%b %-d} the boiler heated for {actual:.1f} hours. With {hdd[day]:.0f} degree days, "
+                        f"the {len(pts)} days since the last setting change point to about {expected:.1f} hours.")
+    if s.boiler_dhw_jump_on:
+        before = [t["dhw_burn_min"] for d, t in sorted(full.items()) if d < day][-DHW_MEDIAN_DAYS:]
+        if len(before) >= DHW_MIN_DAYS and (typical := median(before)) > 0 \
+                and today["dhw_burn_min"] > s.boiler_dhw_jump_x * typical:
+            found["boiler_dhw", "boiler"] = (
+                f"On {day:%b %-d} the boiler heated hot water for {today['dhw_burn_min']:.0f} minutes, against a "
+                f"typical {typical:.0f}. Check for a running tap or the recirculation pump.")
+    return found
+
+
 async def send_pushover(s: AlertSettings, title: str, message: str) -> None:
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.post(PUSHOVER_URL, data={"token": s.pushover_app_token, "user": s.pushover_user_key,
@@ -114,23 +253,37 @@ class AlertsJob:
         self.sessions, self.sources, self.send = sessions, sources, send
         self.interval_s, self.nest_s = cfg.intervals.alerts_s, cfg.intervals.nest_s
         self.started = datetime.now(UTC)
+        self.tz = ZoneInfo(cfg.timezone)
+        self._day_cache: tuple | None = None  # (day, settings, conditions); the daily checks are slow
 
     @staticmethod
     def _checked(s: AlertSettings, sources: set[str], kind: str, subject: str) -> bool:
         """Whether this alert is still being checked. One that isn't closes without a message."""
+        if kind in BOILER_KINDS:
+            return getattr(s, BOILER_KINDS[kind]) and "boiler" in sources
         return {"tank_low": s.tank_low_on, "room_cold": s.room_cold_on,
                 "source_stale": s.source_stale_on and subject in sources}.get(kind, False)
 
     async def poll(self) -> int:
         s = load_settings(self.sessions)
         now = datetime.now(UTC)
-        # The pump sensor is watched only while it is turned on.
-        sources = self.sources if load_pump_settings(self.sessions).enabled else self.sources - {"pumps"}
+        # The pump sensor and the boiler are watched only while they are turned on.
+        sources = set(self.sources)
+        if not load_pump_settings(self.sessions).enabled:
+            sources.discard("pumps")
+        if not load_boiler_settings(self.sessions).enabled:
+            sources.discard("boiler")
         changed = 0
         with self.sessions.begin() as db:
             open_alerts = {(a.kind, a.subject): a for a in db.scalars(select(Alert).where(Alert.cleared_ts.is_(None)))}
             found = conditions(self.sessions, s, now, sources=sources, started=self.started,
                                open_keys=set(open_alerts), nest_s=self.nest_s)
+            if "boiler" in sources:
+                found |= boiler_conditions(self.sessions, s, now, self.tz)
+                yesterday = now.astimezone(self.tz).date() - timedelta(days=1)
+                if self._day_cache is None or self._day_cache[:2] != (yesterday, s):
+                    self._day_cache = (yesterday, s, boiler_day_conditions(self.sessions, s, yesterday, self.tz))
+                found |= self._day_cache[2]
             for key, message in found.items():
                 if key not in open_alerts:
                     db.add(Alert(kind=key[0], subject=key[1], message=message, started_ts=now))

@@ -11,7 +11,7 @@ from heatmon.config import Config
 from heatmon.web.settings import settings_button
 
 PAGES = [("/", "Overview"), ("/zones", "Zones"), ("/runtime", "Runtime"), ("/propane", "Propane"),
-         ("/hotwater", "Hot water"), ("/weather", "Weather"), ("/compare", "Compare"), ("/events", "Events & settings"), ("/status", "Status")]
+         ("/hotwater", "Hot water"), ("/boiler", "Boiler"), ("/weather", "Weather"), ("/compare", "Compare"), ("/events", "Events & settings"), ("/status", "Status")]
 RANGELESS = {"/compare", "/events", "/status"}  # pages that don't use the shared date range
 DEFAULT_DAYS = 14
 

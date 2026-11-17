@@ -1,0 +1,12 @@
+%YAML 1.1
+---
+# ser2net 4 config for the Pi next to the boiler. It shares the boiler's USB serial
+# cable on TCP port 2217 using RFC 2217, which heatmon opens as rfc2217://boilerpi:2217.
+# Replace the device with the cable's name from `ls /dev/serial/by-id/`. That name stays
+# the same across reboots and replugging; /dev/ttyUSB0 may not.
+connection: &boiler
+  accepter: telnet(rfc2217),tcp,2217
+  connector: serialdev,/dev/ttyUSB0,19200n81,local
+  options:
+    # If heatmon reconnects after a network drop, the stale connection gives way.
+    kickolduser: true

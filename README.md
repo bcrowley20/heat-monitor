@@ -1,6 +1,6 @@
 # Heating Monitor
 
-This app collects data from the Nest thermostats, the KWACLEEL38 weather station and the CentriConnect propane tank monitor. It stores everything in a SQLite database and serves web pages on the home network. The goal is to measure how boiler setting changes affect propane use and heating runtime, with the weather taken into account.
+This app collects data from the Nest thermostats, the KWACLEEL38 weather station, the CentriConnect propane tank monitor, a pump sensor and the boiler itself. It stores everything in a SQLite database and serves web pages on the home network. The goal is to measure how boiler setting changes affect propane use and heating runtime, with the weather taken into account.
 
 Phase 1 is done: the app collects data and shows it on a Status page. Charts and analysis come in later phases. See `HEATING_MONITOR_PLAN.md` for the full plan.
 
@@ -63,9 +63,9 @@ For debugging, `heatmon collect` only collects and `heatmon serve` only serves p
 
 ## Pages
 
-**Overview** shows current conditions, today against yesterday, and propane per degree day by week. **Zones** has one chart per zone: room temperature and setpoint on top, with shading while the zone calls for heat, and outdoor temperature in a panel below. Its table lists every call with its overshoot, which is the highest the room rose above its setpoint in the 6 hours after the call ended. **Runtime** shows minutes calling per day and per zone, and how calling time tracks degree days. With the pump sensor running, it also shows when each boiler pump ran. **Propane** shows tank readings, fills, weekly usage, and how usage tracks degree days. **Hot water** shows hot water cycles, minutes and estimated cost from the boiler pump sensor. **Weather** shows temperature, sunshine and wind. **Status** shows each data source's health.
+**Overview** shows current conditions, today against yesterday, and propane per degree day by week. **Zones** has one chart per zone: room temperature and setpoint on top, with shading while the zone calls for heat, and outdoor temperature in a panel below. Its table lists every call with its overshoot, which is the highest the room rose above its setpoint in the 6 hours after the call ended. **Runtime** shows minutes calling per day and per zone, and how calling time tracks degree days. With the pump sensor running, it also shows when each boiler pump ran. **Propane** shows tank readings, fills, weekly usage, and how usage tracks degree days. **Hot water** shows hot water cycles, minutes and estimated cost from the boiler pump sensor. **Boiler** shows what the boiler itself reports: burner state, temperatures, firing rate, every burn, daily burner time and propane, and how burner time tracks degree days. **Weather** shows temperature, sunshine and wind. **Status** shows each data source's health.
 
-Zones, Runtime, Propane, Hot water and Weather have a date range picker at the top. The default is the last 14 days. Grey lines with a small marker show events, such as setting changes. Hover over the marker to read the event.
+Zones, Runtime, Propane, Hot water, Boiler and Weather have a date range picker at the top. The default is the last 14 days. Grey lines with a small marker show events, such as setting changes. Hover over the marker to read the event.
 
 The scatter charts split days into settings periods. Each setting change starts a new period, and changes on the same day count as one. The day of a change belongs to the period before it. Propane is plotted as 7-day averages, because the tank reports in whole percents and single days are too coarse.
 
@@ -111,7 +111,21 @@ A zone that no longer exists stays in `config.yaml` with the day it was retired,
 
 ## Alerts
 
-The gear button at the top right of every page opens the settings. There are three alerts, and each one can be turned off or given its own limits. The propane alert fires when the tank drops below a set percentage. The data source alert fires when a source such as Nest or the weather station has sent nothing for a set number of hours. The room alert fires when a room stays more than a set number of degrees below its setpoint for a set number of hours. Rooms in Eco mode or with heat off are left alone.
+The gear button at the top right of every page opens the settings. There are three general alerts, and each one can be turned off or given its own limits. The propane alert fires when the tank drops below a set percentage. The data source alert fires when a source such as Nest or the weather station has sent nothing for a set number of hours. The room alert fires when a room stays more than a set number of degrees below its setpoint for a set number of hours. Rooms in Eco mode or with heat off are left alone.
+
+The settings also have a "Boiler alerts" section. These run only while boiler collection is on, and each has its own switch and limit:
+
+| Alert | Fires when |
+|---|---|
+| Short cycling | 3 or more heating burns of 10 minutes or less in 2 hours stopped on setpoint met while a zone was still calling |
+| Failed ignition | The boiler's counters show a burner start without a successful ignition in the last 24 hours |
+| Unfamiliar burner state | The burner sits in a state code the app doesn't know for 3 minutes. This may be a lockout. The fault register hasn't been found yet, so this stands in for it. |
+| Heating supply too hot | System supply stays above 120°F for 5 minutes while heating. The slab has no mixing valve. |
+| Not condensing | Return water stays above 130°F for 30 minutes of heating |
+| Hot water not recovering | The tank stays below 105°F for 45 minutes, outside the night setback |
+| Heating runtime | Yesterday's heating burner time was more than 30% and over an hour above what degree days predict. The prediction is a line fitted to the days since the last setting change, so this starts once there are 14 full days. |
+| Hot water runtime | Yesterday's hot water burner time was more than twice the median of the 14 days before |
+| Settings changed | The boiler's parameters changed in the last 24 hours. This one clears by itself. |
 
 The app checks every 5 minutes. You get one message when an alert starts and one when it clears, never repeats in between. A tank alert clears only once the level is 2 points above the limit, so small swings near the limit stay quiet. A source that has never worked since the app started also counts as sending nothing. Turning an alert off closes any open one without a message. Messages go to your phone through Pushover. If a message can't get through, for example while the internet is down, it is sent on a later check. In Pushover, create an application to get an application token, then paste it and your user key into the settings. "Test Pushover" checks that they work. Open pages also show a popup, and a red count on the gear shows how many alerts are open.
 
@@ -199,9 +213,74 @@ When the Cardputer is offline, heatmon backs off and tries less often, up to eve
 
 The boiler is a Lochinvar Knight WHN110 and runs at full fire, 110,000 BTU/h, while heating the hot water tank. A gallon of propane holds about 91,500 BTU. So each minute the DHW Pump runs burns about 0.02 gallons. The cost uses the propane price from `config.yaml`, or the latest invoice if that isn't set. Change `input_btu_h` under `boiler` in `config.yaml` for a different boiler. The figure runs a little high if the DHW Pump keeps running for a short time after the burner stops.
 
+## Boiler
+
+Heatmon reads the Lochinvar Knight's front service port directly. It is Modbus RTU at 19200 baud over the Lochinvar PC cable, which is an ordinary FTDI USB serial cable. Heatmon only ever sends reads. It never writes to the boiler. `boiler/boiler_log.py` is a standalone logger for the same port that writes CSV files, for working out what registers mean.
+
+The port takes one program at a time. Stop `boiler_log.py` or the Lochinvar app before heatmon collects, and turn heatmon's collection off before using either of them.
+
+### Through the Pi
+
+A Raspberry Pi next to the boiler shares the cable over the network with ser2net. Nothing else runs on the Pi.
+
+1. Flash Raspberry Pi OS Lite with Raspberry Pi Imager. In its settings, name the Pi `boilerpi`, turn on SSH and enter your Wi-Fi.
+2. Plug the Lochinvar cable into the Pi, log in, and install ser2net:
+
+   ```sh
+   sudo apt install ser2net
+   ls /dev/serial/by-id/
+   ```
+
+3. Copy `deploy/pi/ser2net.yaml` to `/etc/ser2net.yaml` on the Pi. Put the name `ls` showed in place of `/dev/ttyUSB0`.
+4. Start it, and have it start at boot:
+
+   ```sh
+   sudo systemctl enable --now ser2net
+   sudo systemctl restart ser2net
+   ```
+
+The port setting in heatmon is `rfc2217://boilerpi:2217`. Reserve a fixed address for the Pi in your router. If `boilerpi` doesn't resolve, use the Pi's IP address in place of the name. When the network or the Fedora box is down, readings from that time are lost. The Pi doesn't store them.
+
+### With a USB cable to the Fedora box
+
+Plug the cable into the Fedora box and find its name:
+
+```sh
+ls /dev/serial/by-id/
+sudo usermod -aG dialout $USER
+```
+
+The second command lets your user open serial ports. Log out and back in, or reboot, before it takes effect for the service. The port setting is the full path, such as `/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A10K1234-if00-port0`.
+
+### Turning it on
+
+Open the gear button. Under "Boiler", enter the port and click "Test boiler". If it answers with a supply and tank temperature, switch on "Collect from the boiler" and save. No restart is needed. Moving from the Pi to a direct cable later is the same: change the port and save. While collection is on, "Test boiler" shows the time of the last reading, because the port is in use.
+
+### What it records
+
+Heatmon reads the status registers every 2 seconds (`boiler_s` in `config.yaml`) and keeps one row per minute. Each row holds the averages for that minute: supply, return, system supply, flue, tank and outdoor temperatures, targets, firing rate, fan speed and boiler pump speed. It also holds the seconds of flame, the fuel burned and the burner state. Each minute also keeps every raw register value for 30 days (`raw_days`), for decoding registers later.
+
+Each burn, from flame on to flame off, becomes one row. It records whether the burn was for heating or hot water, how it ended, its average firing rate, its minutes at minimum fire, and its average return and flue temperatures. "Setpoint met, still calling" means the burner stopped while a zone still wanted heat. That is the pattern behind short cycling. A burn whose start or end heatmon missed, such as one already running when collection began, is marked partial.
+
+Once an hour heatmon reads the boiler's parameters. It saves them when any setting differs from the last saved set, and adds a "Boiler settings changed" event listing the registers that changed. That event starts a new settings period on the charts, the same as one you add by hand. The lifetime counters (hours powered, burner starts, cycles) are saved every hour.
+
+### Gallons from the firing rate
+
+Fuel per minute is the firing rate times `input_btu_h`, divided by 91,500 BTU per gallon. This assumes fuel use is in proportion to the firing rate. The Boiler page plots these daily gallons next to the tank's estimate. After a few weeks, compare the totals over a stretch where the tank dropped 5% or more. If the boiler's figure runs high or low, set `fuel_factor` under `boiler` in `config.yaml` to the tank's gallons divided by the boiler's gallons.
+
+### Loading the logger's CSV files
+
+`boiler_log.py` writes `boiler_status.csv` and `boiler_params.csv`. Load them into heatmon with:
+
+```sh
+uv run heatmon import-boiler-csv boiler_status.csv boiler_params.csv
+```
+
+Rows already saved are skipped, so importing the same files twice does no harm. A burn still running at the end of a file is left out.
+
 ## Data API
 
-Every table has a "Download CSV" link. The same data is available as JSON at `/api/<name>?start=YYYY-MM-DD&end=YYYY-MM-DD`, or as CSV at `/api/<name>.csv`. The names are `daily`, `thermostat`, `zone_calls`, `weather_hourly`, `tank`, `deliveries`, `weekly_propane`, `events`, `delivery_intervals`, `baseline_seasons`, `pump_runs` and `hot_water_daily`.
+Every table has a "Download CSV" link. The same data is available as JSON at `/api/<name>?start=YYYY-MM-DD&end=YYYY-MM-DD`, or as CSV at `/api/<name>.csv`. The names are `daily`, `thermostat`, `zone_calls`, `weather_hourly`, `tank`, `deliveries`, `weekly_propane`, `events`, `delivery_intervals`, `baseline_seasons`, `pump_runs`, `hot_water_daily`, `boiler_samples`, `boiler_cycles` and `boiler_daily`.
 
 ## Calculations
 

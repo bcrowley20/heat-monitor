@@ -15,10 +15,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
-from heatmon.db.models import (DailySummary, Event, PropaneDelivery, PumpEvent, SourceStatus, TankReading,
+from heatmon.db.models import (BoilerCycle, BoilerSample, DailySummary, Event, PropaneDelivery, PumpEvent, SourceStatus, TankReading,
                                ThermostatHistory, ThermostatReading, WeatherObs, Zone, ZoneCall)
 from heatmon.db.session import read_setting
 from heatmon.processing import baseline
+from heatmon.processing import boiler as bp
 from heatmon.processing.pumps import Run, daily_pumps, derive_runs
 from heatmon.sources.pumps import PUMP_NAMES, PumpLink, last_states
 from heatmon.sources.pumps import load_settings as load_pump_settings
@@ -558,9 +559,97 @@ def has_pump_data(c: Ctx) -> bool:
         return db.scalar(select(PumpEvent.id).limit(1)) is not None
 
 
+# ---------- boiler ----------
+
+SAMPLE_FIELDS = ("outlet_f", "inlet_f", "system_f", "flue_f", "tank_f", "outdoor_f", "target_f", "sh_setpoint_f",
+                 "dhw_setpoint_f", "rate_pct", "fan_rpm", "pump_pct")
+
+
+def boiler_rows(c: Ctx):
+    with c.sessions() as db:
+        samples = db.scalars(select(BoilerSample).where(BoilerSample.ts >= c.lo, BoilerSample.ts < c.hi)
+                             .order_by(BoilerSample.ts)).all()
+        cycles = db.scalars(select(BoilerCycle).where(BoilerCycle.start_ts >= c.lo, BoilerCycle.start_ts < c.hi)
+                            .order_by(BoilerCycle.start_ts)).all()
+    return samples, cycles
+
+
+def has_boiler_data(c: Ctx) -> bool:
+    with c.sessions() as db:
+        return db.scalar(select(BoilerSample.ts).limit(1)) is not None
+
+
+def boiler_samples(c: Ctx, samples=None) -> list[dict]:
+    """Boiler status averaged over 1, 5 or 15 minutes, depending on the range's length, so
+    long ranges stay quick to draw."""
+    days = (c.end - c.start).days + 1
+    step = 60 * (1 if days <= 3 else 5 if days <= 14 else 15)
+    groups: dict[int, list] = defaultdict(list)
+    for s in samples if samples is not None else boiler_rows(c)[0]:
+        groups[int(s.ts.timestamp()) // step].append(s)
+    out = []
+    for key, ss in groups.items():
+        row = {"time": c.local(datetime.fromtimestamp(key * step, UTC))}
+        for f in SAMPLE_FIELDS:
+            vals = [getattr(s, f) for s in ss if getattr(s, f) is not None]
+            row[f] = _r(mean(vals)) if vals else None
+        row["firing_pct"] = _r(100 * sum(s.flame_s for s in ss) / (60 * len(ss)), 0)
+        row["mode"], row["state"] = ss[-1].mode, bp.STATES.get(ss[-1].state, f"code {ss[-1].state}")
+        out.append(row)
+    return out
+
+
+def boiler_cycles(c: Ctx, cycles=None) -> list[dict]:
+    f = c.cfg.boiler.fuel_factor
+    return [{"start": c.local(k.start_ts), "end": c.local(k.end_ts),
+             "minutes": round((k.end_ts - k.start_ts).total_seconds() / 60, 1),
+             "mode": {"sh": "heating", "dhw": "hot water"}.get(k.mode, k.mode),
+             "ended": {"setpoint_met": "setpoint met, still calling", "demand_ended": "call ended",
+                       "gap": "contact lost"}.get(k.end_reason, k.end_reason),
+             "short": bp.is_short(k), "avg_rate_pct": k.avg_rate_pct, "min_fire_min": round(k.min_fire_s / 60, 1),
+             "gal_est": round(bp.gallons(k.btu, f), 2), "max_supply_f": k.max_outlet_f,
+             "avg_return_f": k.avg_inlet_f, "avg_flue_f": k.avg_flue_f, "partial": k.partial}
+            for k in (cycles if cycles is not None else boiler_rows(c)[1])]
+
+
+def boiler_daily(c: Ctx, rows=None) -> list[dict]:
+    """Burner time, cycles and fuel per day, next to the weather and the tank's estimate."""
+    samples, cycles = rows or boiler_rows(c)
+    totals = bp.daily_totals(samples, cycles, c.tz)
+    summary = {d["date"]: d for d in daily(c)}
+    f = c.cfg.boiler.fuel_factor
+    out = []
+    for day, t in sorted(totals.items()):
+        s = summary.get(day.isoformat(), {})
+        lengths = t["sh_cycle_min"]
+        out.append({"date": day.isoformat(), "hdd": s.get("hdd"), "mean_temp_f": s.get("mean_temp_f"),
+                    "sh_burn_h": round(t["sh_burn_h"], 2), "dhw_burn_min": round(t["dhw_burn_min"], 1),
+                    "sh_cycles": t["sh_cycles"], "dhw_cycles": t["dhw_cycles"], "short_cycles": t["short_cycles"],
+                    "avg_sh_burn_min": round(mean(lengths), 1) if lengths else None,
+                    "min_fire_h": round(t["min_fire_h"], 2),
+                    "condensing_pct": round(100 * t["condensing_min"] / t["firing_min"]) if t["firing_min"] else None,
+                    "sh_gal_est": round(bp.gallons(t["sh_btu"], f), 2),
+                    "dhw_gal_est": round(bp.gallons(t["dhw_btu"], f), 2),
+                    "boiler_gal_est": round(bp.gallons(t["sh_btu"] + t["dhw_btu"], f), 2),
+                    "tank_gal_est": s.get("gal_used_est")})
+    return out
+
+
+def boiler_now(c: Ctx) -> dict | None:
+    with c.sessions() as db:
+        s = db.scalars(select(BoilerSample).order_by(BoilerSample.ts.desc()).limit(1)).first()
+    if s is None:
+        return None
+    return {"time": c.local(s.ts), "age_min": (datetime.now(UTC) - s.ts).total_seconds() / 60,
+            "mode": {"sh": "Heating", "dhw": "Hot water"}.get(s.mode, "Idle"),
+            "state": bp.STATES.get(s.state, f"code {s.state}"), "flame": s.flame_s > 0,
+            **{f: getattr(s, f) for f in SAMPLE_FIELDS}}
+
+
 DATASETS = {
     "daily": daily, "thermostat": thermostat, "zone_calls": zone_calls, "weather_hourly": weather_hourly,
     "tank": tank, "deliveries": deliveries, "weekly_propane": weekly_propane, "events": events,
     "delivery_intervals": delivery_intervals, "baseline_seasons": baseline_seasons,
     "pump_runs": pump_runs, "hot_water_daily": hot_water_daily,
+    "boiler_samples": boiler_samples, "boiler_cycles": boiler_cycles, "boiler_daily": boiler_daily,
 }

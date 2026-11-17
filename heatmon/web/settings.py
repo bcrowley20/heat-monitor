@@ -1,5 +1,6 @@
-"""The settings button in the page header: alerts, the pump sensor, open alerts, and popups."""
+"""The settings button in the page header: alerts, the pump sensor, the boiler, open alerts, and popups."""
 
+import asyncio
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from heatmon.alerts import AlertSettings, load_settings, save_settings, send_pushover
 from heatmon.config import Config
 from heatmon.db.models import Alert
-from heatmon.sources import pumps
+from heatmon.sources import boiler, pumps
 
 POPUP_CHECK_S = 30
 
@@ -75,6 +76,25 @@ def settings_button(cfg: Config, sessions: sessionmaker[Session]) -> None:
                 cold_f = ui.number(value=s.room_cold_f, suffix="°F", min=0.5).props("dense").classes("w-24")
                 ui.label("below its setpoint for")
                 cold_h = ui.number(value=s.room_cold_hours, suffix="hours", min=0.5).props("dense").classes("w-28")
+            with ui.expansion("Boiler alerts").classes("w-full text-sm"):
+                def row(label, on, *numbers):
+                    with ui.row().classes("items-center gap-2"):
+                        sw = ui.switch(label, value=on)
+                        fields = [ui.number(value=v, suffix=suffix, min=lo).props("dense").classes("w-28")
+                                  for v, suffix, lo in numbers]
+                    return sw, *fields
+                short_on, short_n, short_min = row("Short cycling: heating burns in 2 hours", s.boiler_short_on,
+                                                   (s.boiler_short_count, "burns", 1), (s.boiler_short_min, "min or less", 1))
+                ign_on, = row("Failed ignition", s.boiler_ignition_on)
+                state_on, = row("Unfamiliar burner state (possible lockout)", s.boiler_state_on)
+                slab_on, slab_f = row("Heating supply above", s.boiler_slab_on, (s.boiler_slab_f, "°F", 1))
+                ret_on, ret_f = row("Return water above (not condensing)", s.boiler_return_on, (s.boiler_return_f, "°F", 1))
+                tank_on2, tank_f = row("Hot water tank stuck below", s.boiler_tank_on, (s.boiler_tank_f, "°F", 1))
+                run_on, run_pct = row("A day's heating burner time above the usual by", s.boiler_runtime_on,
+                                      (s.boiler_runtime_pct, "%", 1))
+                dhw_on, dhw_x = row("A day's hot water burner time above the usual by", s.boiler_dhw_jump_on,
+                                    (s.boiler_dhw_jump_x, "times", 1.1))
+                set_on, = row("Boiler settings changed", s.boiler_settings_on)
             popups = ui.switch("Show popups on these pages", value=s.popups)
 
             ui.label("Pushover").classes("text-sm font-semibold pt-2")
@@ -105,15 +125,44 @@ def settings_button(cfg: Config, sessions: sessionmaker[Session]) -> None:
                                    for n, p in reply.pumps.items())
                 ui.notify(f"Pump sensor answered: {states}.", type="positive")
 
+            bs = boiler.load_settings(sessions)
+            ui.label("Boiler").classes("text-sm font-semibold pt-2")
+            ui.label("The boiler's service port, through the Pi (rfc2217://boilerpi:2217) or a USB cable on this "
+                     "computer (/dev/serial/by-id/...). See the README.").classes("text-xs text-gray-500")
+            with ui.row().classes("w-full items-center gap-2"):
+                boiler_on = ui.switch("Collect from the boiler", value=bs.enabled)
+                port = ui.input("Port", value=bs.port, placeholder="rfc2217://boilerpi:2217").classes("grow")
+
+            async def test_boiler():
+                if bs.enabled:  # the port takes one user at a time, and collection already has it
+                    last = boiler.last_sample_ts(sessions)
+                    ui.notify(f"Collecting; last reading {last.astimezone(tz):%b %-d %H:%M}." if last else
+                              "Collecting, but no readings yet. See the Status page for errors.")
+                    return
+                try:
+                    st = await asyncio.to_thread(boiler.test_port, (port.value or "").strip())
+                except Exception as e:
+                    ui.notify(f"No answer from the boiler: {type(e).__name__}: {e}", type="negative")
+                    return
+                ui.notify(f"Boiler answered: supply {st.temp(62)}°F, tank {st.temp(70)}°F.", type="positive")
+
             def current() -> AlertSettings | None:
                 try:
                     return AlertSettings(
                         pushover_app_token=(token.value or "").strip(), pushover_user_key=(user.value or "").strip(),
                         popups=popups.value, tank_low_on=tank_on.value, tank_low_pct=tank_pct.value,
                         source_stale_on=stale_on.value, source_stale_hours=stale_h.value,
-                        room_cold_on=cold_on.value, room_cold_f=cold_f.value, room_cold_hours=cold_h.value)
+                        room_cold_on=cold_on.value, room_cold_f=cold_f.value, room_cold_hours=cold_h.value,
+                        boiler_short_on=short_on.value, boiler_short_count=int(short_n.value or 0),
+                        boiler_short_min=short_min.value, boiler_ignition_on=ign_on.value,
+                        boiler_state_on=state_on.value, boiler_slab_on=slab_on.value, boiler_slab_f=slab_f.value,
+                        boiler_return_on=ret_on.value, boiler_return_f=ret_f.value, boiler_tank_on=tank_on2.value,
+                        boiler_tank_f=tank_f.value, boiler_runtime_on=run_on.value, boiler_runtime_pct=run_pct.value,
+                        boiler_dhw_jump_on=dhw_on.value, boiler_dhw_jump_x=dhw_x.value,
+                        boiler_settings_on=set_on.value)
                 except ValidationError:
-                    ui.notify("Percent must be 0 to 100, and degrees and hours must be above zero.", type="warning")
+                    ui.notify("Percent must be 0 to 100, degrees and hours above zero, and the hot water "
+                              "multiple above 1.", type="warning")
                     return None
 
             def save():
@@ -125,7 +174,12 @@ def settings_button(cfg: Config, sessions: sessionmaker[Session]) -> None:
                     except ValueError:
                         ui.notify("Enter the sensor's address, or turn the pump sensor off.", type="warning")
                         return
+                if boiler_on.value and not (port.value or "").strip():
+                    ui.notify("Enter the boiler's port, or turn boiler collection off.", type="warning")
+                    return
                 save_settings(sessions, s)
+                boiler.save_settings(sessions, boiler.BoilerSettings(enabled=boiler_on.value,
+                                                                     port=(port.value or "").strip()))
                 pumps.save_settings(sessions, pumps.PumpSettings(enabled=pump_on.value,
                                                                  address=(address.value or "").strip()))
                 ui.notify("Settings saved. Alerts are checked every few minutes.")
@@ -145,6 +199,7 @@ def settings_button(cfg: Config, sessions: sessionmaker[Session]) -> None:
 
             with ui.row().classes("w-full justify-end gap-2 pt-2"):
                 ui.button("Test sensor", on_click=test_sensor).props("flat")
+                ui.button("Test boiler", on_click=test_boiler).props("flat")
                 ui.button("Test Pushover", on_click=test).props("flat")
                 ui.button("Cancel", on_click=dialog.close).props("flat")
                 ui.button("Save", on_click=save).props("unelevated")

@@ -19,6 +19,7 @@ intervals:
   summaries_s: 3600       # rebuild zone calls and daily summaries
   alerts_s: 300           # check alert conditions
   pumps_s: 5              # boiler pump sensor (turn it on in the app's settings), minimum 1
+  boiler_s: 2             # boiler status reads (turn it on in the app's settings), minimum 1
 
 propane:
   tank_size_gal: 1000
@@ -31,6 +32,8 @@ propane:
 
 boiler:
   input_btu_h: 110000     # full-fire input; hot water heating runs at full fire
+  fuel_factor: 1.0        # scales gallons worked out from the firing rate; calibrate against the tank
+  raw_days: 30            # days to keep each minute's full register dump
 
 # Zones are matched to thermostats by the Nest room name or the thermostat's custom
 # name. If a thermostat doesn't match, the log names it; then set nest_device_id here.

@@ -216,3 +216,70 @@ class PumpEvent(Base):
     gap: Mapped[bool] = mapped_column(default=False)  # time is a guess: contact with the Pi was lost
     __table_args__ = (Index("ux_pump_events_boot_seq", "boot_id", "seq", unique=True),
                       Index("ix_pump_events_pump_ts", "pump", "ts"))
+
+
+class BoilerSample(Base):
+    """One minute of boiler status: averages of the reads in that minute, plus the last read's
+    state. raw_json keeps the last read's whole register block for a while, for decoding."""
+
+    __tablename__ = "boiler_samples"
+    ts: Mapped[datetime] = mapped_column(primary_key=True)  # start of the minute
+    samples: Mapped[int]
+    outlet_f: Mapped[float | None]
+    inlet_f: Mapped[float | None]
+    system_f: Mapped[float | None]
+    flue_f: Mapped[float | None]
+    tank_f: Mapped[float | None]
+    outdoor_f: Mapped[float | None]
+    target_f: Mapped[float | None]
+    sh_setpoint_f: Mapped[float | None]
+    dhw_setpoint_f: Mapped[float | None]
+    rate_pct: Mapped[float | None]
+    fan_rpm: Mapped[float | None]
+    pump_pct: Mapped[float | None]
+    state: Mapped[int]  # burner state code
+    mode: Mapped[str]  # sh, dhw or idle
+    flame_s: Mapped[float]  # seconds of flame in the minute
+    btu: Mapped[float]  # fuel burned in the minute, from the firing rate
+    sh_demand: Mapped[bool]
+    dhw_demand: Mapped[bool]
+    raw_json: Mapped[str | None] = mapped_column(Text)
+
+
+class BoilerCycle(Base):
+    """One burner run, from flame on to flame off."""
+
+    __tablename__ = "boiler_cycles"
+    start_ts: Mapped[datetime] = mapped_column(primary_key=True)
+    end_ts: Mapped[datetime]
+    mode: Mapped[str]  # sh, dhw or mixed
+    end_reason: Mapped[str]  # demand_ended, setpoint_met (demand still on) or gap (contact lost)
+    partial: Mapped[bool]  # the start or end wasn't seen
+    avg_rate_pct: Mapped[float | None]
+    min_fire_s: Mapped[float]
+    btu: Mapped[float]
+    max_outlet_f: Mapped[float | None]
+    avg_inlet_f: Mapped[float | None]
+    avg_flue_f: Mapped[float | None]
+
+
+class BoilerParams(Base):
+    """The boiler's parameter registers, saved when any setting changes."""
+
+    __tablename__ = "boiler_params"
+    ts: Mapped[datetime] = mapped_column(primary_key=True)
+    values_json: Mapped[str] = mapped_column(Text)  # {"1000": value, ...}, counters left out
+
+
+class BoilerCounters(Base):
+    """The boiler's lifetime counters, read hourly."""
+
+    __tablename__ = "boiler_counters"
+    ts: Mapped[datetime] = mapped_column(primary_key=True)
+    power_on_h: Mapped[int]
+    burner_starts: Mapped[int]
+    ignitions: Mapped[int]  # successful ones, probably
+    burner_h: Mapped[int]  # probably burner hours; burner_h_2 rises with it
+    burner_h_2: Mapped[int]
+    sh_cycles: Mapped[int]
+    dhw_cycles: Mapped[int]

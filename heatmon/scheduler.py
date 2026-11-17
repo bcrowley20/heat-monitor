@@ -11,6 +11,7 @@ from heatmon.db.session import record_status
 from heatmon.logs import scrub
 from heatmon.processing.summaries import SummariesJob
 from heatmon.sources.base import Source
+from heatmon.sources.boiler import BoilerSource
 from heatmon.sources.centriconnect import CentriConnectSource
 from heatmon.sources.nest import NestSource
 from heatmon.sources.open_meteo import OpenMeteoSource
@@ -37,7 +38,8 @@ def build_sources(cfg: Config, sessions: sessionmaker[Session]) -> list[Source]:
             sources.append(cls(cfg, sessions))
         else:
             log.warning("%s: credentials missing from .env; not collecting", cls.name)
-    sources += [OpenMeteoSource(cfg, sessions), PumpSource(cfg, sessions)]  # the pump sensor checks its own settings
+    # The pump sensor and the boiler check their own settings.
+    sources += [OpenMeteoSource(cfg, sessions), PumpSource(cfg, sessions), BoilerSource(cfg, sessions)]
     alerts = AlertsJob(cfg, sessions, {s.name for s in sources})  # data sources only, not jobs
     return sources + [SummariesJob(cfg, sessions), alerts]
 
@@ -57,7 +59,8 @@ async def run_source(source: Source, sessions: sessionmaker[Session]) -> None:
             failures = 0
             if n is not None:  # None: turned off in settings, so nothing to report
                 record_status(sessions, source.name)
-                log.info("%s: stored %d rows", source.name, n)
+                if n:  # the fast sources store nothing most polls; don't fill the log with that
+                    log.info("%s: stored %d rows", source.name, n)
         except Exception as e:
             failures += 1
             msg = scrub(f"{type(e).__name__}: {e}")

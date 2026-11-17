@@ -1,5 +1,5 @@
 """Command line: heatmon auth nest | run | serve | collect | backfill | rebuild-summaries | import-deliveries |
-import-nest-takeout | import-tank-csv"""
+import-nest-takeout | import-tank-csv | import-boiler-csv"""
 
 import argparse
 import asyncio
@@ -35,6 +35,9 @@ def main(argv: list[str] | None = None) -> None:
     tk.add_argument("file", type=Path)
     tc = sub.add_parser("import-tank-csv", help="add past tank readings from a MyPropane data table CSV")
     tc.add_argument("file", type=Path)
+    bc = sub.add_parser("import-boiler-csv", help="add boiler data from the CSV files boiler/boiler_log.py writes")
+    bc.add_argument("status", type=Path, help="boiler_status.csv")
+    bc.add_argument("params", type=Path, nargs="?", help="boiler_params.csv")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -90,6 +93,11 @@ def main(argv: list[str] | None = None) -> None:
             if added:
                 print("Rebuilding daily summaries...")
                 rebuild(cfg, sessions)
+        case "import-boiler-csv":
+            from heatmon.sources.boiler import import_csv
+            minutes, cycles, params = import_csv(cfg, sessions, args.status, args.params)
+            print(f"Added {minutes} minutes and {cycles} burner cycles"
+                  + (f", and read {params} parameter snapshots." if args.params else "."))
 
 
 def _auth_nest(cfg) -> None:

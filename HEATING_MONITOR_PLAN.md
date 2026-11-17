@@ -83,7 +83,7 @@ Non-goals: controlling the thermostats, a mobile app, or multi-user accounts.
 
 ### 2.5 Optional hardware (not in initial scope)
 
-Nest "HEATING" means a **zone is calling**, not that the **boiler is firing**. The boiler may be paused for anti-cycling, satisfied at setpoint, or heating domestic hot water. The boiler's PC port uses a proprietary Lochinvar cable and software, so don't attempt to read it. If true burner runtime is wanted later, a CT-clamp energy monitor on the boiler circuit (for example a Shelly EM) can detect firing by current draw. Design the data model so a `boiler_power` source can be added later.
+Nest "HEATING" means a **zone is calling**, not that the **boiler is firing**. The boiler may be paused for anti-cycling, satisfied at setpoint, or heating domestic hot water. Update, November 2026: the boiler's PC port turned out to be plain Modbus RTU, and heatmon now reads burner state and firing rate from it directly (see the README's Boiler section).
 
 ---
 

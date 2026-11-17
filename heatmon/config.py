@@ -43,6 +43,7 @@ class Intervals(BaseModel):
     summaries_s: int = 3600
     alerts_s: int = 300
     pumps_s: int = Field(5, ge=1)  # boiler pump sensor, when turned on in the app's settings
+    boiler_s: int = Field(2, ge=1)  # boiler status reads, when turned on in the app's settings
 
 
 class Propane(BaseModel):
@@ -60,6 +61,11 @@ class Boiler(BaseModel):
     # Fuel burned per hour at full fire. A Lochinvar Knight WHN110 is 22,000 to 110,000 BTU/h,
     # and it runs at full fire while heating the hot water tank.
     input_btu_h: float = 110_000
+    # Gallons from the firing rate are multiplied by this. Adjust it once the tank shows the
+    # rate-based estimate running high or low.
+    fuel_factor: float = 1.0
+    # Days to keep each minute's full register dump, used for decoding registers.
+    raw_days: int = 30
 
 
 class Config(BaseModel):
