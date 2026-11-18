@@ -241,6 +241,22 @@ A Raspberry Pi next to the boiler shares the cable over the network with ser2net
 
 The port setting in heatmon is `rfc2217://boilerpi:2217`. Reserve a fixed address for the Pi in your router. If `boilerpi` doesn't resolve, use the Pi's IP address in place of the name. When the network or the Fedora box is down, readings from that time are lost. The Pi doesn't store them.
 
+### Through a Windows PC
+
+A Windows PC can do the Pi's job. `boiler/share_port.py` shares the cable the same way ser2net does, so heatmon on the Fedora box doesn't know the difference.
+
+1. Install uv from <https://docs.astral.sh/uv/>, and copy `boiler/share_port.py` to the PC.
+2. Plug in the cable. Device Manager lists it under "Ports (COM & LPT)" with a name like COM3.
+3. In the folder with the script, run:
+
+   ```sh
+   uv run share_port.py --port COM3
+   ```
+
+The first time, Windows asks whether to let Python through the firewall. Allow it on private networks. The port setting in heatmon is `rfc2217://<PC name>:2217`, or use the PC's IP address. The PC must stay awake, so set it to never sleep while plugged in. Closing the window stops the sharing.
+
+The script opens the cable only while heatmon is connected. To use the Lochinvar app or `boiler_log.py`, turn heatmon's collection off first. When the Pi is ready, change the port to `rfc2217://boilerpi:2217` and save.
+
 ### With a USB cable to the Fedora box
 
 Plug the cable into the Fedora box and find its name:
