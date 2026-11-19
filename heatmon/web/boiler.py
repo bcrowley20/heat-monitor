@@ -131,7 +131,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
         if curve:
             chart("Outdoor reset check: heating target against outdoor temperature", [{
                 "type": "scatter", "mode": "markers", "x": [s["outdoor_f"] for s in curve],
-                "y": [s["target_f"] for s in curve], "marker": {"color": SERIES[1], "size": 5},
+                "y": [s["sh_setpoint_f"] for s in curve], "marker": {"color": SERIES[1], "size": 5},
                 "hovertemplate": "%{x:.0f}°F outside: target %{y:.1f}°F<extra></extra>"}],
                 layout(260, showlegend=False, hovermode="closest", xaxis={"title": {"text": "outdoor °F"}},
                        yaxis={"title": {"text": "target °F"}}))
