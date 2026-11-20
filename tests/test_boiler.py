@@ -141,6 +141,16 @@ def test_params_saved_on_change_with_an_event(sessions):
     assert [e.details for e in events] == ["r1045: 0 → 47111"]
 
 
+def test_lifetime_uses_latest_counters(cfg, sessions):
+    c = data.Ctx(cfg, sessions, date(2026, 11, 16), date(2026, 11, 16))
+    assert data.boiler_lifetime(c) is None
+    src.store_params(sessions, T0, params(r1309=4000))
+    src.store_params(sessions, T0 + timedelta(hours=1), params(r1309=4001, r1313=500, r1317=200))
+    life = data.boiler_lifetime(c)
+    assert (life["sh_cycles"], life["dhw_cycles"], life["burner_h"]) == (500, 200, 4001)
+    assert life["avg_cycle_min"] == 4001 * 60 / (65536 + 100)
+
+
 # ---------- the source and the CSV import ----------
 
 class FakePort:

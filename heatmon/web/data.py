@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
-from heatmon.db.models import (BoilerCycle, BoilerSample, DailySummary, Event, PropaneDelivery, PumpEvent, SourceStatus, TankReading,
+from heatmon.db.models import (BoilerCounters, BoilerCycle, BoilerSample, DailySummary, Event, PropaneDelivery, PumpEvent, SourceStatus, TankReading,
                                ThermostatHistory, ThermostatReading, WeatherObs, Zone, ZoneCall)
 from heatmon.db.session import read_setting
 from heatmon.processing import baseline
@@ -633,6 +633,17 @@ def boiler_daily(c: Ctx, rows=None) -> list[dict]:
                     "boiler_gal_est": round(bp.gallons(t["sh_btu"] + t["dhw_btu"], f), 2),
                     "tank_gal_est": s.get("gal_used_est")})
     return out
+
+
+def boiler_lifetime(c: Ctx) -> dict | None:
+    """The boiler's own lifetime counters from the latest hourly read."""
+    with c.sessions() as db:
+        k = db.scalars(select(BoilerCounters).order_by(BoilerCounters.ts.desc()).limit(1)).first()
+    if k is None:
+        return None
+    return {"time": c.local(k.ts), "sh_cycles": k.sh_cycles, "dhw_cycles": k.dhw_cycles,
+            "burner_h": k.burner_h, "power_on_h": k.power_on_h,
+            "avg_cycle_min": k.burner_h * 60 / k.burner_starts if k.burner_starts else None}
 
 
 def boiler_now(c: Ctx) -> dict | None:

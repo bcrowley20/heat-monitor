@@ -28,8 +28,17 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                          "under the gear button at the top right.").classes("text-sm text-gray-500")
             return
 
+        life = data.boiler_lifetime(c)
+        if life:
+            with ui.row().classes("w-full gap-3 pt-2"):
+                stat("Hot water cycles", _fmt(life["dhw_cycles"]), f"lifetime, read {life['time']}")
+                stat("Heat cycles", _fmt(life["sh_cycles"]), "lifetime")
+                stat("Average cycle time", _fmt(life["avg_cycle_min"], " min", 1), "lifetime burner hours ÷ starts")
+                stat("Lifetime burner hours (est.)", _fmt(life["burner_h"], " h"),
+                     f"powered on {_fmt(life['power_on_h'], ' h')} ({life['power_on_h'] / 8766:.1f} years)")
+
         now = data.boiler_now(c)
-        with ui.row().classes("w-full gap-3 pt-2"):
+        with ui.row().classes("w-full gap-3"):
             old = now["age_min"] > STALE_MIN
             stat("Boiler", now["mode"] if not old else "No recent reading",
                  f"burner {now['state']}, read {now['time']}")
