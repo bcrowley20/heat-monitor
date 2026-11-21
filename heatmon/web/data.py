@@ -28,6 +28,7 @@ from heatmon.processing.degree_days import HOUR, hourly_temps
 
 OVERSHOOT_WINDOW = timedelta(hours=6)
 PUMPS_STALE = timedelta(minutes=1)  # Overview shows pump states as last known after this
+BOILER_STALE_MIN = 5  # boiler readings count as old after this
 
 
 def c_to_f(c: float | None) -> float | None:
@@ -655,6 +656,22 @@ def boiler_now(c: Ctx) -> dict | None:
             "mode": {"sh": "Heating", "dhw": "Hot water"}.get(s.mode, "Idle"),
             "state": bp.STATES.get(s.state, f"code {s.state}"), "flame": s.flame_s > 0,
             **{f: getattr(s, f) for f in SAMPLE_FIELDS}}
+
+
+def boiler_pump_now(c: Ctx) -> dict | None:
+    """The boiler pump's latest state from the boiler's own reads, for the Overview page.
+    `since` is the first minute of the current on or off stretch."""
+    with c.sessions() as db:
+        s = db.scalars(select(BoilerSample).order_by(BoilerSample.ts.desc()).limit(1)).first()
+        if s is None or s.pump_pct is None:
+            return None
+        on = s.pump_pct > 0
+        flip = db.scalar(select(func.max(BoilerSample.ts))
+                         .where(BoilerSample.pump_pct <= 0 if on else BoilerSample.pump_pct > 0))
+        since = db.scalar(select(func.min(BoilerSample.ts))
+                          .where(BoilerSample.ts > flip if flip else BoilerSample.ts.is_not(None)))
+    return {"on": on, "pct": s.pump_pct, "since": c.local(since), "time": c.local(s.ts),
+            "current": (datetime.now(UTC) - s.ts).total_seconds() / 60 <= BOILER_STALE_MIN}
 
 
 DATASETS = {

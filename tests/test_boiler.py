@@ -151,6 +151,26 @@ def test_lifetime_uses_latest_counters(cfg, sessions):
     assert life["avg_cycle_min"] == 4001 * 60 / (65536 + 100)
 
 
+def test_boiler_pump_now(cfg, sessions):
+    c = data.Ctx(cfg, sessions, date(2026, 11, 16), date(2026, 11, 16))
+    assert data.boiler_pump_now(c) is None
+    t = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=4)
+    base = {"samples": 30, "state": 4, "mode": "idle", "flame_s": 0.0, "btu": 0.0, "sh_demand": False,
+            "dhw_demand": False}
+    insert_ignore(sessions, BoilerSample, [{**base, "ts": t + timedelta(minutes=i), "pump_pct": pct}
+                                           for i, pct in enumerate([35.0, 0.0, 35.0, 35.0])])
+    now = data.boiler_pump_now(c)
+    assert (now["on"], now["pct"], now["since"], now["current"]) == (True, 35.0, c.local(t + timedelta(minutes=2)), True)
+
+    with sessions() as db:
+        db.query(BoilerSample).delete()
+        db.commit()
+    old = t - timedelta(minutes=10)
+    insert_ignore(sessions, BoilerSample, [{**base, "ts": old + timedelta(minutes=i), "pump_pct": 100.0}
+                                           for i in range(2)])
+    now = data.boiler_pump_now(c)  # never seen off, and the latest read is old
+    assert (now["on"], now["since"], now["current"]) == (True, c.local(old), False)
+
 # ---------- the source and the CSV import ----------
 
 class FakePort:

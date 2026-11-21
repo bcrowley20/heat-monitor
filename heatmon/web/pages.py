@@ -127,9 +127,21 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
                                 ui.icon("pause_circle").classes("text-gray-400")
                                 ui.label("Not calling").classes("text-sm text-gray-500")
 
-            pumps = data.pumps_now(c)
-            if pumps:
+            pumps, boiler_pump = data.pumps_now(c), data.boiler_pump_now(c)
+            if pumps or boiler_pump:
                 with ui.row().classes("w-full gap-3"):
+                    if boiler_pump:
+                        b = boiler_pump
+                        with ui.card().classes(CARD + " min-w-40"):
+                            ui.label("Boiler pump").classes("text-xs text-gray-500")
+                            with ui.row().classes("items-center gap-1"):
+                                ui.icon("sync" if b["on"] else "pause_circle") \
+                                    .style(f"color:{SERIES[0] if b['on'] and b['current'] else MUTED}")
+                                ui.label(f"Running at {b['pct']:.0f}%" if b["on"] else "Off") \
+                                    .classes("text-lg font-semibold")
+                            ui.label(f"since {b['since']}" if b["current"] else
+                                     f"last known; no reading from the boiler since {b['time']}") \
+                                .classes("text-xs text-gray-500")
                     for p in pumps:
                         with ui.card().classes(CARD + " min-w-40"):
                             ui.label(p["pump"]).classes("text-xs text-gray-500")

@@ -9,8 +9,6 @@ from heatmon.web import data
 from heatmon.web.components import CARD, INK, MUTED, SERIES, chart, date_range, frame, layout, stat, table
 from heatmon.web.pages import _by_period, _fit_scatter, _fmt, _with_events
 
-STALE_MIN = 5  # the "now" panel says the reading is old after this
-
 
 def _burns(n: int) -> str:
     return f"{n} burn" + ("" if n == 1 else "s")
@@ -39,7 +37,7 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
 
         now = data.boiler_now(c)
         with ui.row().classes("w-full gap-3"):
-            old = now["age_min"] > STALE_MIN
+            old = now["age_min"] > data.BOILER_STALE_MIN
             stat("Boiler", now["mode"] if not old else "No recent reading",
                  f"burner {now['state']}, read {now['time']}")
             stat("Firing rate", _fmt(now["rate_pct"] if now["flame"] else 0, "%"))
