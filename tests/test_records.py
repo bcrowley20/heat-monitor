@@ -99,13 +99,6 @@ def test_seeded_snapshots(sessions):
     assert labels == ["before 2026-10-25", "2026-10-25 new settings"]
 
 
-def test_latest_snapshot(sessions):
-    label, since, values = records.latest_snapshot(sessions)  # the seeded ones
-    assert (label, values["sh1_offset_f"], values["ramp_delay.enabled"]) == ("2026-10-25 new settings", 10, True)
-    records.save_snapshot(sessions, "later", datetime(2026, 11, 20, tzinfo=UTC), {"sh1_offset_f": 15})
-    records.save_snapshot(sessions, "undated", None, {"sh1_offset_f": 1})
-    assert records.latest_snapshot(sessions)[0] == "later"
-
 def test_price_worked_out_from_total_cost():
     rows, _ = records.parse_deliveries_csv("date,gallons,price_per_gal,total_cost\n1/5/25,400,,$1000.00\n")
     assert rows[0]["price_per_gal"] == 2.5

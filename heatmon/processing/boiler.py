@@ -23,6 +23,35 @@ MIN_FIRE_PCT = 25.5  # the boiler's lowest rate reads 25%
 MAX_STEP_S = 10  # reads further apart than this are a gap, not a run of the same state
 
 
+# Settings in the parameter block that were matched against values read off the boiler's
+# display (2026-11-22). Kinds: temp is °F like the status temps, diff is °F x 25, tenths is
+# tenths of a second, permille is tenths of a percent.
+SETTINGS = [
+    ("SH1 low outdoor temperature", 1163, "temp"), ("SH1 set point at low outdoor temp", 1164, "temp"),
+    ("SH1 high outdoor temperature", 1165, "temp"), ("SH1 set point at high outdoor temp", 1166, "temp"),
+    ("SH1 outdoor air shutdown", 1167, "temp"), ("SH1 outdoor shutdown differential", 1168, "diff"),
+    ("SH1 offset", 1191, "diff"), ("SH1 differential", 1192, "diff"),
+    ("Anti-cycling time", 1157, "tenths"), ("DHW boiler set point", 1181, "temp"),
+    *((f"Ramp delay step {i}", (1277 + i, 1271 + i), "step") for i in range(1, 7)),
+]
+
+
+def show_settings(values: dict[int, int]) -> list[tuple[str, str]]:
+    """The known settings as (name, value as shown on the boiler)."""
+    def mins(tenths: int) -> str:
+        return f"{tenths // 600}:{tenths // 10 % 60:02d}"
+
+    out = []
+    for name, reg, kind in SETTINGS:
+        if kind == "step":
+            out.append((name, f"{values[reg[0]] / 10:g}%, {mins(values[reg[1]])}"))
+        else:
+            raw = values[reg]
+            out.append((name, f"{temp_f(raw):g}°F" if kind == "temp" else f"{raw / 25:g}°F" if kind == "diff"
+                        else mins(raw)))
+    return out
+
+
 def temp_f(raw: int) -> float | None:
     """Temperatures are signed 16-bit: °F = raw / 25 + 932. 0x8000 means no sensor."""
     if raw == 0x8000:

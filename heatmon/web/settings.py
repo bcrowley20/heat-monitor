@@ -10,7 +10,6 @@ from pydantic import ValidationError
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from heatmon import records
 from heatmon.alerts import AlertSettings, load_settings, save_settings, send_pushover
 from heatmon.config import Config
 from heatmon.db.models import Alert
@@ -134,17 +133,16 @@ def settings_button(cfg: Config, sessions: sessionmaker[Session]) -> None:
                 boiler_on = ui.switch("Collect from the boiler", value=bs.enabled)
                 port = ui.input("Port", value=bs.port, placeholder="rfc2217://boilerpi:2217").classes("grow")
             with ui.expansion("Current settings downloaded from the boiler").classes("w-full text-sm"):
-                if (snap := records.latest_snapshot(sessions)) is None:
-                    ui.label("None recorded yet.").classes("text-gray-500")
+                if (got := boiler.latest_settings(sessions)) is None:
+                    ui.label("Nothing read from the boiler yet.").classes("text-gray-500")
                 else:
-                    label, since, values = snap
-                    ui.label(f"“{label}”, in effect from "
-                             f"{since.astimezone(tz).strftime('%Y-%m-%d %H:%M') if since else 'an unknown date'}. "
-                             "Edit them on the Events & settings page.").classes("text-xs text-gray-500")
+                    since, rows = got
+                    ui.label(f"The app checks the boiler every hour. These values have been in place since "
+                             f"{since.astimezone(tz):%Y-%m-%d %H:%M}.").classes("text-xs text-gray-500")
                     with ui.grid(columns="auto 1fr").classes("w-full gap-x-4 gap-y-0"):
-                        for k, v in values.items():
-                            ui.label(k).classes("text-gray-500")
-                            ui.label(records.show_value(v))
+                        for name, value in rows:
+                            ui.label(name).classes("text-gray-500")
+                            ui.label(value)
 
             async def test_boiler():
                 if bs.enabled:  # the port takes one user at a time, and collection already has it

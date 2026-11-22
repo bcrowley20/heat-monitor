@@ -141,6 +141,25 @@ def test_params_saved_on_change_with_an_event(sessions):
     assert [e.details for e in events] == ["r1045: 0 → 47111"]
 
 
+def test_latest_settings_as_shown_on_the_boiler(sessions):
+    assert src.latest_settings(sessions) is None
+    # Values read 2026-11-22 while the owner had SH1 offset at 11°F and anti-cycling at 9:00.
+    live = dict(r1163=42362, r1164=44987, r1165=43862, r1166=44487, r1167=43862, r1168=250, r1191=275, r1192=500,
+                r1157=5400, r1181=45987, r1272=1800, r1273=1800, r1274=1800, r1275=3000, r1276=3000, r1277=600,
+                r1278=250, r1279=300, r1280=350, r1281=350, r1282=400, r1283=600)
+    src.store_params(sessions, T0, params(**live))
+    ts, rows = src.latest_settings(sessions)
+    assert ts == T0
+    assert rows == [
+        ("SH1 low outdoor temperature", "5°F"), ("SH1 set point at low outdoor temp", "110°F"),
+        ("SH1 high outdoor temperature", "65°F"), ("SH1 set point at high outdoor temp", "90°F"),
+        ("SH1 outdoor air shutdown", "65°F"), ("SH1 outdoor shutdown differential", "10°F"),
+        ("SH1 offset", "11°F"), ("SH1 differential", "20°F"), ("Anti-cycling time", "9:00"),
+        ("DHW boiler set point", "150°F"),
+        ("Ramp delay step 1", "25%, 3:00"), ("Ramp delay step 2", "30%, 3:00"), ("Ramp delay step 3", "35%, 3:00"),
+        ("Ramp delay step 4", "35%, 5:00"), ("Ramp delay step 5", "40%, 5:00"), ("Ramp delay step 6", "60%, 1:00")]
+
+
 def test_lifetime_uses_latest_counters(cfg, sessions):
     c = data.Ctx(cfg, sessions, date(2026, 11, 16), date(2026, 11, 16))
     assert data.boiler_lifetime(c) is None

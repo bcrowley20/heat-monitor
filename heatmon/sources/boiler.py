@@ -23,7 +23,7 @@ from heatmon.config import Config
 from heatmon.db.models import BoilerCounters, BoilerCycle, BoilerParams, BoilerSample, Event
 from heatmon.db.session import insert_ignore, read_setting, write_setting
 from heatmon.processing.boiler import (PARAM_BLOCKS, STATUS_COUNT, STATUS_START, Status, Tracker, counters,
-                                       setting_changes, settings_of)
+                                       setting_changes, settings_of, show_settings)
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +110,13 @@ def store_params(sessions: sessionmaker[Session], ts: datetime, values: dict[int
             log.info("Boiler settings changed: %s", "; ".join(diff))
             db.add(Event(ts=ts, type="setting_change", title="Boiler settings changed (read from the boiler)",
                          details="; ".join(diff)))
+
+
+def latest_settings(sessions: sessionmaker[Session]) -> tuple[datetime, list[tuple[str, str]]] | None:
+    """When the settings were last saved, and the known ones as shown on the boiler."""
+    with sessions() as db:
+        p = db.scalars(select(BoilerParams).order_by(BoilerParams.ts.desc()).limit(1)).first()
+        return (p.ts, show_settings({int(k): v for k, v in json.loads(p.values_json).items()})) if p else None
 
 
 def prune_raw(sessions: sessionmaker[Session], before: datetime) -> None:
