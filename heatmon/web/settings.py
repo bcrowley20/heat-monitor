@@ -132,18 +132,6 @@ def settings_button(cfg: Config, sessions: sessionmaker[Session]) -> None:
             with ui.row().classes("w-full items-center gap-2"):
                 boiler_on = ui.switch("Collect from the boiler", value=bs.enabled)
                 port = ui.input("Port", value=bs.port, placeholder="rfc2217://boilerpi:2217").classes("grow")
-            with ui.expansion("Current settings downloaded from the boiler").classes("w-full text-sm"):
-                if (got := boiler.latest_settings(sessions)) is None:
-                    ui.label("Nothing read from the boiler yet.").classes("text-gray-500")
-                else:
-                    since, rows = got
-                    ui.label(f"The app checks the boiler every hour. These values have been in place since "
-                             f"{since.astimezone(tz):%Y-%m-%d %H:%M}.").classes("text-xs text-gray-500")
-                    with ui.grid(columns="auto 1fr").classes("w-full gap-x-4 gap-y-0"):
-                        for name, value in rows:
-                            ui.label(name).classes("text-gray-500")
-                            ui.label(value)
-
             async def test_boiler():
                 if bs.enabled:  # the port takes one user at a time, and collection already has it
                     last = boiler.last_sample_ts(sessions)

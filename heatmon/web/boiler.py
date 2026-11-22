@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from heatmon.config import Config
 from heatmon.processing.boiler import CONDENSING_F
+from heatmon.sources.boiler import latest_settings
 from heatmon.web import data
 from heatmon.web.components import CARD, INK, MUTED, SERIES, chart, date_range, frame, layout, stat, table
 from heatmon.web.pages import _by_period, _fit_scatter, _fmt, _with_events
@@ -147,3 +148,14 @@ def register(cfg: Config, sessions: sessionmaker[Session]) -> None:
         table("Burns", cycles[::-1], "boiler_cycles", c.start, c.end)
         table("Boiler setting changes",
               [e for e in events[::-1] if e["title"].startswith("Boiler settings changed")], None, rows_per_page=5)
+
+        if settings := latest_settings(sessions):
+            since, rows = settings
+            with ui.card().classes(CARD + " w-full"):
+                ui.label("Current boiler settings").classes("text-sm font-semibold")
+                ui.label(f"Read from the boiler, which the app checks every hour. In place since {c.local(since)}. "
+                         "Only the settings decoded so far are shown.").classes("text-xs text-gray-500")
+                with ui.grid(columns="auto 1fr").classes("gap-x-6 gap-y-0 text-sm"):
+                    for name, value in rows:
+                        ui.label(name).classes("text-gray-500")
+                        ui.label(value)
