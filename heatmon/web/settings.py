@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from heatmon import records
 from heatmon.alerts import AlertSettings, load_settings, save_settings, send_pushover
 from heatmon.config import Config
 from heatmon.db.models import Alert
@@ -132,6 +133,18 @@ def settings_button(cfg: Config, sessions: sessionmaker[Session]) -> None:
             with ui.row().classes("w-full items-center gap-2"):
                 boiler_on = ui.switch("Collect from the boiler", value=bs.enabled)
                 port = ui.input("Port", value=bs.port, placeholder="rfc2217://boilerpi:2217").classes("grow")
+            with ui.expansion("Current settings downloaded from the boiler").classes("w-full text-sm"):
+                if (snap := records.latest_snapshot(sessions)) is None:
+                    ui.label("None recorded yet.").classes("text-gray-500")
+                else:
+                    label, since, values = snap
+                    ui.label(f"“{label}”, in effect from "
+                             f"{since.astimezone(tz).strftime('%Y-%m-%d %H:%M') if since else 'an unknown date'}. "
+                             "Edit them on the Events & settings page.").classes("text-xs text-gray-500")
+                    with ui.grid(columns="auto 1fr").classes("w-full gap-x-4 gap-y-0"):
+                        for k, v in values.items():
+                            ui.label(k).classes("text-gray-500")
+                            ui.label(records.show_value(v))
 
             async def test_boiler():
                 if bs.enabled:  # the port takes one user at a time, and collection already has it

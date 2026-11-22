@@ -198,6 +198,14 @@ def save_snapshot(sessions: sessionmaker[Session], label: str, effective_from: d
         db.add(s)
 
 
+def latest_snapshot(sessions: sessionmaker[Session]) -> tuple[str, datetime | None, dict[str, Any]] | None:
+    """The snapshot in effect now, as (label, in effect from, flattened settings)."""
+    with sessions() as db:
+        s = db.scalars(select(BoilerSettingsSnapshot).order_by(
+            BoilerSettingsSnapshot.effective_from.is_(None), BoilerSettingsSnapshot.effective_from.desc())).first()
+        return (s.label, s.effective_from, flatten(json.loads(s.params_json))) if s else None
+
+
 def delete_snapshot(sessions: sessionmaker[Session], snapshot_id: int) -> None:
     with sessions.begin() as db:
         if s := db.get(BoilerSettingsSnapshot, snapshot_id):
