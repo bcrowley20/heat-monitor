@@ -141,6 +141,16 @@ def test_params_saved_on_change_with_an_event(sessions):
     assert [e.details for e in events] == ["r1045: 0 → 47111"]
 
 
+def test_setting_changes_name_known_settings():
+    # The owner's test on 2026-11-22: SH1 offset 11°F → 10°F and anti-cycling 9:00 → 10:00.
+    old = params(r1157=5400, r1191=275, r1000=8, r1272=1800, r1278=250)
+    new = params(r1157=6000, r1191=250, r1000=9, r1272=1800, r1278=250)
+    assert bp.setting_changes(old, new) == ["SH1 offset: 11°F → 10°F", "Anti-cycling time: 9:00 → 10:00",
+                                            "r1000: 8 → 9"]
+    assert bp.setting_changes(new, params(r1157=6000, r1191=250, r1000=9, r1272=2400, r1278=250)) == \
+        ["Ramp delay step 1: 25%, 3:00 → 25%, 4:00"]
+
+
 def test_latest_settings_as_shown_on_the_boiler(sessions):
     assert src.latest_settings(sessions) is None
     # Values read 2026-11-22 while the owner had SH1 offset at 11°F and anti-cycling at 9:00.

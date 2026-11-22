@@ -218,7 +218,11 @@ def settings_of(values: dict[int, int]) -> dict[int, int]:
 
 
 def setting_changes(old: dict[int, int], new: dict[int, int]) -> list[str]:
-    return [f"r{r}: {old.get(r)} → {new.get(r)}" for r in sorted(set(old) | set(new)) if old.get(r) != new.get(r)]
+    """Named settings as shown on the boiler, then raw registers that have no name yet."""
+    named = [f"{name}: {a} → {b}" for (name, a), (_, b) in zip(show_settings(old), show_settings(new)) if a != b]
+    known = {r for _, reg, _ in SETTINGS for r in (reg if isinstance(reg, tuple) else (reg,))}
+    return named + [f"r{r}: {old.get(r)} → {new.get(r)}" for r in sorted(set(old) | set(new))
+                    if r not in known and old.get(r) != new.get(r)]
 
 
 def gallons(btu: float, fuel_factor: float) -> float:
